@@ -1,0 +1,60 @@
+# Production stack: PostgreSQL + auth (FastAPI) + API (NestJS) + web (Caddy with automatic HTTPS).
+# Usage on the server:  docker compose -f docker-compose.prod.yml up -d --build
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: prisim_crm
+      POSTGRES_USER: prisim
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prisim -d prisim_crm"]
+      interval: 10s
+      retries: 5
+
+  auth:
+    build: { context: ., dockerfile: infrastructure/docker/auth.Dockerfile }
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://prisim:${POSTGRES_PASSWORD}@db:5432/prisim_crm
+    depends_on:
+      db: { condition: service_healthy }
+      api: { condition: service_started }  # API applies migrations on start
+
+  api:
+    build: { context: ., dockerfile: infrastructure/docker/api.Dockerfile }
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://prisim:${POSTGRES_PASSWORD}@db:5432/prisim_crm
+      STORAGE_DIR: ./storage
+      PORT: 4000
+    volumes:
+      - storage:/app/storage
+    depends_on:
+      db: { condition: service_healthy }
+
+  web:
+    build: { context: ., dockerfile: infrastructure/docker/web.Dockerfile }
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api, auth]
+
+volumes:
+  pgdata:
+  storage:
+  caddy_data:
+  caddy_config:

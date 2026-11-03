@@ -1,0 +1,31 @@
+{
+  "name": "prisim-crm",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Prisim CRM - lead management, follow-ups, calls, tasks and feedback in one dashboard",
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "db:start": "node scripts/dev-db.mjs",
+    "db:migrate": "npm run prisma:migrate -w apps/api",
+    "db:seed": "npm run seed -w apps/api",
+    "dev:api": "npm run start:dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "dev": "concurrently -n db,auth,api,web -c gray,magenta,blue,green \"npm run db:start\" \"npm run dev:auth\" \"npm run dev:api\" \"npm run dev:web\"",
+    "build": "npm run build -w apps/api && npm run build -w apps/web",
+    "test": "npm run test -w apps/api && npm run test:auth",
+    "setup:auth": "node scripts/auth.mjs setup",
+    "dev:auth": "node scripts/auth.mjs dev",
+    "test:auth": "node scripts/auth.mjs test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "embedded-postgres": "17.11.0-beta.19"
+  },
+  "allowScripts": {
+    "@prisma/engines@6.19.3": true,
+    "esbuild@0.28.2": true
+  }
+}

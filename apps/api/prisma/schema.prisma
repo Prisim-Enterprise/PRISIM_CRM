@@ -1,0 +1,711 @@
+// Prisim CRM database schema (PostgreSQL)
+// All timestamps are stored in UTC. UUID primary keys for business entities.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────── Users, teams, roles ─────────────────────────
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  fullName     String
+  email        String   @unique
+  phone        String? // agent phone in E.164, used for click-to-call
+  passwordHash String
+  isActive     Boolean  @default(true)
+  timezone     String   @default("Asia/Kolkata")
+  teamId       String?  @db.Uuid
+  team         Team?    @relation("TeamMembers", fields: [teamId], references: [id])
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  roles              UserRole[]
+  permissionOverrides UserPermission[]
+  ledTeams          Team[]              @relation("TeamLeader")
+  assignedLeads      Lead[]              @relation("LeadOwner")
+  assignments        LeadAssignment[]    @relation("AssignmentUser")
+  assignmentsMade    LeadAssignment[]    @relation("AssignmentActor")
+  statusChanges      LeadStatusHistory[]
+  notes              LeadNote[]
+  followUps          FollowUp[]          @relation("FollowUpOwner")
+  followUpsCreated   FollowUp[]          @relation("FollowUpCreator")
+  calls              CallLog[]
+  tasksAssigned      Task[]              @relation("TaskAssignee")
+  tasksCreated       Task[]              @relation("TaskCreator")
+  taskComments       TaskComment[]
+  taskActivities     TaskActivity[]
+  feedbackSubmitted  Feedback[]          @relation("FeedbackSubmitter")
+  feedbackAssigned   Feedback[]          @relation("FeedbackAssignee")
+  feedbackResponses  FeedbackResponse[]
+  attachments        Attachment[]
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  clientsCreated     Client[]            @relation("ClientCreator")
+  clientWorkCreated  ClientWork[]        @relation("ClientWorkCreator")
+  clientWorkAssigned ClientWorkAssignee[]
+  clientWorkUpdates  ClientWorkUpdate[]
+
+  @@index([teamId])
+  @@map("users")
+}
+
+model Team {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  leaderId  String?  @db.Uuid
+  leader    User?    @relation("TeamLeader", fields: [leaderId], references: [id])
+  members   User[]   @relation("TeamMembers")
+  tasks     Task[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("teams")
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  key         String           @unique
+  name        String
+  description String?
+  isSystem    Boolean          @default(false)
+  permissions RolePermission[]
+  users       UserRole[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  key         String           @unique
+  group       String
+  description String
+  roles       RolePermission[]
+  userOverrides UserPermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+enum PermissionEffect {
+  GRANT
+  DENY
+}
+
+/// Per-user exceptions on top of role permissions.
+/// Effective permissions = role permissions + GRANTs - DENYs.
+model UserPermission {
+  userId       String           @db.Uuid
+  permissionId String           @db.Uuid
+  effect       PermissionEffect
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission   Permission       @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  createdAt    DateTime         @default(now())
+
+  @@id([userId, permissionId])
+  @@map("user_permissions")
+}
+
+model UserRole {
+  userId String @db.Uuid
+  roleId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+// ───────────────────────── Leads ─────────────────────────
+
+enum LeadStatus {
+  NEW
+  UNASSIGNED
+  ASSIGNED
+  CONTACT_ATTEMPTED
+  CONTACTED
+  INTERESTED
+  FOLLOW_UP_REQUIRED
+  CONVERTED
+  LOST
+  INVALID
+  DUPLICATE
+}
+
+model LeadSource {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String   @unique // e.g. meta_ads, manual
+  name      String
+  leads     Lead[]
+  createdAt DateTime @default(now())
+
+  @@map("lead_sources")
+}
+
+model Lead {
+  id              String     @id @default(uuid()) @db.Uuid
+  externalLeadId  String?
+  sourceId        String     @db.Uuid
+  source          LeadSource @relation(fields: [sourceId], references: [id])
+  fullName        String
+  phoneE164       String?
+  email           String?
+  city            String?
+  campaignName    String?
+  adsetName       String?
+  adName          String?
+  formName        String?
+  sourceCreatedAt DateTime?
+  // Original values from the source system. CRM-managed fields above may be edited
+  // by users; sync never overwrites fields a user has changed (see editedFields).
+  sourceData      Json?
+  editedFields    String[]   @default([])
+  assignedUserId  String?    @db.Uuid
+  assignedUser    User?      @relation("LeadOwner", fields: [assignedUserId], references: [id])
+  status          LeadStatus @default(NEW)
+  closeReason     String?
+  duplicateOfId   String?    @db.Uuid
+  duplicateOf     Lead?      @relation("LeadDuplicates", fields: [duplicateOfId], references: [id])
+  duplicates      Lead[]     @relation("LeadDuplicates")
+  lastContactedAt DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  assignments   LeadAssignment[]
+  statusHistory LeadStatusHistory[]
+  notes         LeadNote[]
+  followUps     FollowUp[]
+  calls         CallLog[]
+  tasks         Task[]
+
+  @@unique([sourceId, externalLeadId])
+  @@index([assignedUserId, status])
+  @@index([status])
+  @@index([phoneE164])
+  @@index([email])
+  @@index([campaignName])
+  @@index([createdAt])
+  @@map("leads")
+}
+
+model LeadAssignment {
+  id           String    @id @default(uuid()) @db.Uuid
+  leadId       String    @db.Uuid
+  lead         Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  userId       String    @db.Uuid
+  user         User      @relation("AssignmentUser", fields: [userId], references: [id])
+  assignedById String?   @db.Uuid
+  assignedBy   User?     @relation("AssignmentActor", fields: [assignedById], references: [id])
+  method       String    @default("manual") // manual | round_robin | workload
+  reason       String?
+  assignedAt   DateTime  @default(now())
+  endedAt      DateTime?
+
+  @@index([leadId, endedAt])
+  @@index([userId])
+  @@map("lead_assignments")
+}
+
+model LeadStatusHistory {
+  id         String      @id @default(uuid()) @db.Uuid
+  leadId     String      @db.Uuid
+  lead       Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  fromStatus LeadStatus?
+  toStatus   LeadStatus
+  reason     String?
+  actorId    String?     @db.Uuid
+  actor      User?       @relation(fields: [actorId], references: [id])
+  createdAt  DateTime    @default(now())
+
+  @@index([leadId, createdAt])
+  @@map("lead_status_history")
+}
+
+model LeadNote {
+  id        String   @id @default(uuid()) @db.Uuid
+  leadId    String   @db.Uuid
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  authorId  String   @db.Uuid
+  author    User     @relation(fields: [authorId], references: [id])
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([leadId, createdAt])
+  @@map("lead_notes")
+}
+
+// ───────────────────────── Follow-ups ─────────────────────────
+
+enum FollowUpStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+model FollowUp {
+  id               String         @id @default(uuid()) @db.Uuid
+  leadId           String         @db.Uuid
+  lead             Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  ownerId          String         @db.Uuid
+  owner            User           @relation("FollowUpOwner", fields: [ownerId], references: [id])
+  createdById      String         @db.Uuid
+  createdBy        User           @relation("FollowUpCreator", fields: [createdById], references: [id])
+  type             String         @default("call") // call | whatsapp | email | meeting | other
+  dueAt            DateTime
+  note             String?
+  status           FollowUpStatus @default(PENDING)
+  outcome          String?
+  completedAt      DateTime?
+  cancelReason     String?
+  rescheduleCount  Int            @default(0)
+  reminderSentAt   DateTime?
+  overdueNotified  Boolean        @default(false)
+  reschedules      FollowUpReschedule[]
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([ownerId, status, dueAt])
+  @@index([leadId])
+  @@index([status, dueAt])
+  @@map("follow_ups")
+}
+
+model FollowUpReschedule {
+  id         String   @id @default(uuid()) @db.Uuid
+  followUpId String   @db.Uuid
+  followUp   FollowUp @relation(fields: [followUpId], references: [id], onDelete: Cascade)
+  fromDueAt  DateTime
+  toDueAt    DateTime
+  reason     String?
+  actorId    String?  @db.Uuid
+  createdAt  DateTime @default(now())
+
+  @@map("follow_up_reschedules")
+}
+
+// ───────────────────────── Calls ─────────────────────────
+
+enum CallDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum CallStatus {
+  INITIATED
+  RINGING
+  IN_PROGRESS
+  COMPLETED
+  NO_ANSWER
+  BUSY
+  FAILED
+  CANCELED
+}
+
+model CallLog {
+  id                 String        @id @default(uuid()) @db.Uuid
+  leadId             String        @db.Uuid
+  lead               Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  userId             String        @db.Uuid
+  user               User          @relation(fields: [userId], references: [id])
+  provider           String        @default("manual") // manual | exotel | mock
+  providerCallId     String?
+  direction          CallDirection @default(OUTBOUND)
+  fromNumber         String?
+  toNumber           String?
+  status             CallStatus    @default(COMPLETED)
+  startedAt          DateTime?
+  endedAt            DateTime?
+  durationSeconds    Int?
+  // Employee disposition: CONNECTED, NO_ANSWER, BUSY, INTERESTED, CALLBACK,
+  // NOT_INTERESTED, WRONG_NUMBER, SWITCHED_OFF, CONVERTED
+  outcome            String?
+  notes              String?
+  recordingUrl       String? // provider URL (fetched via proxy, never exposed raw)
+  recordingKey       String? // locally stored / uploaded recording
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@unique([provider, providerCallId])
+  @@index([leadId, createdAt])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("call_logs")
+}
+
+// ───────────────────────── Tasks ─────────────────────────
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  REVIEW
+  DONE
+  BLOCKED
+}
+
+model Task {
+  id             String       @id @default(uuid()) @db.Uuid
+  number         Int          @unique @default(autoincrement())
+  title          String
+  description    String?
+  createdById    String       @db.Uuid
+  createdBy      User         @relation("TaskCreator", fields: [createdById], references: [id])
+  assigneeId     String?      @db.Uuid
+  assignee       User?        @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  teamId         String?      @db.Uuid
+  team           Team?        @relation(fields: [teamId], references: [id])
+  leadId         String?      @db.Uuid
+  lead           Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  parentId       String?      @db.Uuid
+  parent         Task?        @relation("Subtasks", fields: [parentId], references: [id], onDelete: Cascade)
+  subtasks       Task[]       @relation("Subtasks")
+  priority       TaskPriority @default(MEDIUM)
+  status         TaskStatus   @default(TODO)
+  requiresReview Boolean      @default(false)
+  reviewNote     String?
+  position       Float        @default(0)
+  startAt        DateTime?
+  dueAt          DateTime?
+  completedAt    DateTime?
+  overdueNotified Boolean     @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  comments    TaskComment[]
+  checklist   TaskChecklistItem[]
+  attachments Attachment[]
+  activities  TaskActivity[]
+
+  @@index([assigneeId, status])
+  @@index([teamId, status])
+  @@index([status, dueAt])
+  @@map("tasks")
+}
+
+model TaskChecklistItem {
+  id        String   @id @default(uuid()) @db.Uuid
+  taskId    String   @db.Uuid
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  text      String
+  done      Boolean  @default(false)
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@map("task_checklist_items")
+}
+
+model TaskComment {
+  id        String   @id @default(uuid()) @db.Uuid
+  taskId    String   @db.Uuid
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId  String   @db.Uuid
+  author    User     @relation(fields: [authorId], references: [id])
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([taskId, createdAt])
+  @@map("task_comments")
+}
+
+model TaskActivity {
+  id        String   @id @default(uuid()) @db.Uuid
+  taskId    String   @db.Uuid
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actorId   String?  @db.Uuid
+  actor     User?    @relation(fields: [actorId], references: [id])
+  action    String
+  detail    Json?
+  createdAt DateTime @default(now())
+
+  @@index([taskId, createdAt])
+  @@map("task_activities")
+}
+
+// ───────────────────────── Feedback & queries ─────────────────────────
+
+enum FeedbackKind {
+  FEEDBACK
+  QUERY
+}
+
+enum FeedbackStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+model Feedback {
+  id              String         @id @default(uuid()) @db.Uuid
+  kind            FeedbackKind   @default(FEEDBACK)
+  // Null when anonymous. Anonymous submitters are linked only through a keyed hash
+  // so they can still see their own submissions; reviewers never see identity.
+  submittedById   String?        @db.Uuid
+  submittedBy     User?          @relation("FeedbackSubmitter", fields: [submittedById], references: [id])
+  submitterHash   String?
+  isAnonymous     Boolean        @default(false)
+  category        String
+  subject         String
+  description     String
+  priority        TaskPriority   @default(MEDIUM)
+  status          FeedbackStatus @default(SUBMITTED)
+  assignedAdminId String?        @db.Uuid
+  assignedAdmin   User?          @relation("FeedbackAssignee", fields: [assignedAdminId], references: [id])
+  resolvedAt      DateTime?
+  responses       FeedbackResponse[]
+  attachments     Attachment[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([status, createdAt])
+  @@index([submittedById])
+  @@index([submitterHash])
+  @@map("feedback")
+}
+
+model FeedbackResponse {
+  id         String   @id @default(uuid()) @db.Uuid
+  feedbackId String   @db.Uuid
+  feedback   Feedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  // Null author = reply from the anonymous submitter
+  authorId   String?  @db.Uuid
+  author     User?    @relation(fields: [authorId], references: [id])
+  fromSubmitter Boolean @default(false)
+  body       String
+  isInternal Boolean  @default(false) // internal admin note, hidden from submitter
+  statusChange FeedbackStatus?
+  createdAt  DateTime @default(now())
+
+  @@index([feedbackId, createdAt])
+  @@map("feedback_responses")
+}
+
+// ───────────────────────── Clients ─────────────────────────
+// A Super Admin records a client and posts pieces of work for it to any people.
+// Assignees post progress updates; admins see every client, work item and update.
+
+enum ClientStatus {
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+}
+
+enum ClientWorkStatus {
+  OPEN
+  IN_PROGRESS
+  SUBMITTED
+  DONE
+}
+
+model Client {
+  id          String       @id @default(uuid()) @db.Uuid
+  name        String
+  company     String?
+  contactName String?
+  email       String?
+  phone       String?
+  notes       String?
+  status      ClientStatus @default(ACTIVE)
+  createdById String       @db.Uuid
+  createdBy   User         @relation("ClientCreator", fields: [createdById], references: [id])
+  works       ClientWork[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([status])
+  @@map("clients")
+}
+
+model ClientWork {
+  id          String               @id @default(uuid()) @db.Uuid
+  clientId    String               @db.Uuid
+  client      Client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  priority    TaskPriority         @default(MEDIUM)
+  status      ClientWorkStatus     @default(OPEN)
+  dueAt       DateTime?
+  completedAt DateTime?
+  createdById String               @db.Uuid
+  createdBy   User                 @relation("ClientWorkCreator", fields: [createdById], references: [id])
+  assignees   ClientWorkAssignee[]
+  updates     ClientWorkUpdate[]
+  attachments Attachment[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@index([clientId, status])
+  @@map("client_work")
+}
+
+model ClientWorkAssignee {
+  workId    String     @db.Uuid
+  work      ClientWork @relation(fields: [workId], references: [id], onDelete: Cascade)
+  userId    String     @db.Uuid
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@id([workId, userId])
+  @@index([userId])
+  @@map("client_work_assignees")
+}
+
+model ClientWorkUpdate {
+  id         String            @id @default(uuid()) @db.Uuid
+  workId     String            @db.Uuid
+  work       ClientWork        @relation(fields: [workId], references: [id], onDelete: Cascade)
+  authorId   String            @db.Uuid
+  author     User              @relation(fields: [authorId], references: [id])
+  body       String?
+  fromStatus ClientWorkStatus?
+  toStatus   ClientWorkStatus?
+  createdAt  DateTime          @default(now())
+
+  @@index([workId, createdAt])
+  @@map("client_work_updates")
+}
+
+// ───────────────────────── Files ─────────────────────────
+
+model Attachment {
+  id           String    @id @default(uuid()) @db.Uuid
+  storageKey   String    @unique
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  uploadedById String?   @db.Uuid // null for anonymous feedback
+  uploadedBy   User?     @relation(fields: [uploadedById], references: [id])
+  taskId       String?   @db.Uuid
+  task         Task?     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  feedbackId   String?   @db.Uuid
+  feedback     Feedback? @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  clientWorkId String?     @db.Uuid
+  clientWork   ClientWork? @relation(fields: [clientWorkId], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+
+  @@map("attachments")
+}
+
+// ───────────────────────── Platform ─────────────────────────
+
+model Notification {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String?
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+model IntegrationConfig {
+  id        String   @id @default(uuid()) @db.Uuid
+  key       String   @unique // google_sheets | telephony | assignment
+  enabled   Boolean  @default(false)
+  // Non-secret settings only. Secrets live in environment variables.
+  config    Json     @default("{}")
+  state     Json     @default("{}") // cursors, round-robin pointer, etc.
+  updatedAt DateTime @updatedAt
+
+  @@map("integration_configs")
+}
+
+enum SyncRunStatus {
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+model SyncRun {
+  id         String        @id @default(uuid()) @db.Uuid
+  trigger    String        // schedule | manual | retry | reconcile | csv | webhook
+  source     String?       // lead source key the rows were imported into (meta_ads, website, ...)
+  status     SyncRunStatus @default(RUNNING)
+  rowsRead   Int           @default(0)
+  created    Int           @default(0)
+  updated    Int           @default(0)
+  skipped    Int           @default(0)
+  failed     Int           @default(0)
+  error      String?
+  startedAt  DateTime      @default(now())
+  finishedAt DateTime?
+  rowErrors  SyncRowError[]
+
+  @@index([startedAt])
+  @@map("sync_logs")
+}
+
+model SyncRowError {
+  id             String   @id @default(uuid()) @db.Uuid
+  syncRunId      String   @db.Uuid
+  syncRun        SyncRun  @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+  rowNumber      Int
+  externalLeadId String?
+  reason         String
+  rawRow         Json
+  resolved       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([resolved])
+  @@map("sync_row_errors")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @db.Uuid
+  actor      User?    @relation(fields: [actorId], references: [id])
+  action     String
+  entityType String
+  entityId   String?
+  before     Json?
+  after      Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model WebhookEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  provider    String
+  eventId     String
+  payload     Json
+  processedAt DateTime?
+  error       String?
+  createdAt   DateTime  @default(now())
+
+  @@unique([provider, eventId])
+  @@map("webhook_events")
+}
