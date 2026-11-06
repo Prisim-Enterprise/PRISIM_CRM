@@ -5,7 +5,7 @@ dist/
 storage/
 .pgdata/
 coverage/
-apps/web/dist/
+frontend/dist/
 
 # Python
 apps/auth/.venv/

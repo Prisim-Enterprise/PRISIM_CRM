@@ -38,7 +38,7 @@ The seed creates the Super Admin from `SEED_ADMIN_EMAIL` and emails them a Clerk
 To remove all data (leads, calls, follow-ups, tasks, feedback, logs, all users except Super Admins, and teams) while keeping roles and permissions:
 
 ```bash
-npm run clear-data -w apps/api
+npm run clear-data -w backend
 ```
 
 Uploaded files and recordings are stored in `storage/`. Delete that folder's contents to remove them too.
@@ -63,7 +63,7 @@ Uploaded files and recordings are stored in `storage/`. Delete that folder's con
 
 **Users & roles.** Super Admin, Admin/Manager, Team Leader and Employee are editable permission bundles (30 permissions), and custom roles can be added. The backend enforces every scope (all / team / own). Employees can **view all leads but only edit their own**, as decided.
 
-**Dashboard & reports (Module G).** Metrics, daily trends, lead status, campaign performance, call outcomes and per-employee performance, scoped by role, with date, campaign, team and employee filters. Metric definitions are documented in `apps/api/src/reports/reports.ts`.
+**Dashboard & reports (Module G).** Metrics, daily trends, lead status, campaign performance, call outcomes and per-employee performance, scoped by role, with date, campaign, team and employee filters. Metric definitions are documented in `backend/src/reports/reports.ts`.
 
 **Platform.** In-app notifications, audit log, rate limiting, security headers, validated inputs, CSV export (protected against formula injection) and private file storage.
 
@@ -79,8 +79,8 @@ An end-to-end API check covering roles and permissions, assignment, calls, recor
 
 ```
 apps/auth     retired FastAPI sign-in service, replaced by Clerk
-apps/api      NestJS API (src/<module>), Prisma schema + migrations + seed
-apps/web      React app (src/pages, src/components)
+backend       NestJS API (src/<module>), Prisma schema + migrations + seed
+frontend      React app (src/pages, src/components)
 infrastructure Dockerfiles + Caddyfile for production
 scripts       local database runner, backup script
 docs          deployment guide, decisions

@@ -4,19 +4,19 @@
   "version": "1.0.0",
   "description": "Prisim CRM - lead management, follow-ups, calls, tasks and feedback in one dashboard",
   "workspaces": [
-    "apps/api",
-    "apps/web"
+    "backend",
+    "frontend"
   ],
   "scripts": {
     "db:start": "node scripts/dev-db.mjs",
-    "db:migrate": "npm run prisma:migrate -w apps/api",
-    "db:seed": "npm run seed -w apps/api",
-    "dev:api": "npm run start:dev -w apps/api",
-    "dev:web": "npm run dev -w apps/web",
+    "db:migrate": "npm run prisma:migrate -w backend",
+    "db:seed": "npm run seed -w backend",
+    "dev:api": "npm run start:dev -w backend",
+    "dev:web": "npm run dev -w frontend",
     "dev": "concurrently -n db,api,web -c gray,blue,green \"npm run db:start\" \"npm run dev:api\" \"npm run dev:web\"",
-    "build": "npm run build -w apps/api && npm run build -w apps/web",
-    "test": "npm run test -w apps/api",
-    "serve:api": "npm run build -w apps/api && npm run start -w apps/api",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "test": "npm run test -w backend",
+    "serve:api": "npm run build -w backend && npm run start -w backend",
     "serve:tunnel": "node scripts/tunnel.mjs",
     "serve": "concurrently -n db,api,tunnel -c gray,blue,green \"npm run db:start\" \"npm run serve:api\" \"npm run serve:tunnel\""
   },
