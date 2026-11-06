@@ -7,8 +7,8 @@ Built from the *Prisim CRM Business Workflow & Technical Architecture Blueprint 
 | Layer | Tech |
 |---|---|
 | Web | React 19 + TypeScript, Vite, Tailwind CSS, TanStack Query, Recharts |
-| Auth | **FastAPI** (Python) service for sign-in, own profile and password changes, at `/api/v1/auth/*` (docs at `/api/v1/auth/docs`) |
-| API | NestJS 11 (modular monolith) for everything else, REST `/api/v1`, Swagger at `/api/docs`. It verifies the tokens the auth service issues. |
+| Auth | **Clerk** for sign-in, passwords and sessions. Roles and permissions stay in the CRM. |
+| API | NestJS 11 (modular monolith), REST `/api/v1`, Swagger at `/api/docs`. It verifies Clerk session tokens. |
 | Database | PostgreSQL 17 + Prisma 6 |
 | Integrations | Google Sheets API (service account), Exotel click-to-call + recordings, built-in call simulator |
 
@@ -18,32 +18,22 @@ Requires Node.js 20+ and Python 3.11+. A local PostgreSQL is downloaded and run 
 
 ```bash
 npm install
-cp .env.example .env        # then set JWT_SECRET etc. (already done on this machine)
+cp .env.example .env        # then set the Clerk keys and SEED_ADMIN_EMAIL (already done on this machine)
 npm run db:start            # terminal 1: local PostgreSQL on port 5433
 npm run db:migrate          # first time only
 npm run db:seed -- --demo   # first time only: roles + admin + sample data
-npm run setup:auth          # first time only: Python venv for the auth service
-npm run dev:auth            # terminal 4: auth service on http://localhost:4100
 npm run dev:api             # terminal 2: API on http://localhost:4000
 npm run dev:web             # terminal 3: app on http://localhost:5173
 ```
 
-Or run everything together with `npm run dev` (database, auth, API, web).
+Or run everything together with `npm run dev` (database, API, web).
 
 > npm 11 blocks package install scripts by default. If `prisma generate` complains, run
 > `npm approve-scripts @prisma/engines esbuild` once, then `npm rebuild`.
 
-### Demo logins (from `--demo` seed)
+### First sign-in
 
-| Role | Email | Password |
-|---|---|---|
-| Super Admin | admin@prisim.local | Admin@12345 |
-| Admin / Manager | manager@prisim.local | Demo@12345 |
-| Team Leader (North) | lead.north@prisim.local | Demo@12345 |
-| Team Leader (South) | lead.south@prisim.local | Demo@12345 |
-| Employee | rahul@prisim.local, priya@prisim.local, karthik@prisim.local, sneha@prisim.local | Demo@12345 |
-
-Without `--demo`, the seed creates only the Super Admin and prints a random password.
+The seed creates the Super Admin from `SEED_ADMIN_EMAIL` and emails them a Clerk invitation. Everyone else is added on the Users page, which sends their invitation. A Clerk account alone gives no access: the email must match a user in the CRM.
 
 To remove all data (leads, calls, follow-ups, tasks, feedback, logs, all users except Super Admins, and teams) while keeping roles and permissions:
 
@@ -80,7 +70,7 @@ Uploaded files and recordings are stored in `storage/`. Delete that folder's con
 ## Tests
 
 ```bash
-npm test                  # API unit tests + auth service tests (pytest)
+npm test                  # API unit tests
 ```
 
 An end-to-end API check covering roles and permissions, assignment, calls, recordings, tasks, anonymous feedback and import was run during development (59 checks, all passing).
@@ -88,7 +78,7 @@ An end-to-end API check covering roles and permissions, assignment, calls, recor
 ## Project layout
 
 ```
-apps/auth     FastAPI auth service (sign-in, own profile, password)
+apps/auth     retired FastAPI sign-in service, replaced by Clerk
 apps/api      NestJS API (src/<module>), Prisma schema + migrations + seed
 apps/web      React app (src/pages, src/components)
 infrastructure Dockerfiles + Caddyfile for production
@@ -100,9 +90,13 @@ docs          deployment guide, decisions
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) (Oracle Cloud Always Free).
 
+## Database
+
+PostgreSQL on **Supabase** (`DATABASE_URL`, Session pooler). The CRM connects directly with Prisma and does not use Supabase's Data API or Auth. Every table has row-level security on with no policies, so the publishable key can't read or write anything. A migration that adds a table must also enable it there. `npm run dev` still starts the local database, kept as a fallback at `LOCAL_DATABASE_URL`.
+
 ## How sign-in works
 
-1. The web app posts email + password to `/api/v1/auth/login`, which goes to the **FastAPI** service.
-2. FastAPI checks the bcrypt password hash in PostgreSQL, applies a limit of 10 attempts per minute per IP, writes to the audit log, and returns a signed token (HS256, valid 12h).
-3. All other requests go to the **NestJS** API, which verifies the same token with the shared `JWT_SECRET`. It reloads the user's roles and permissions on every request, so deactivating a user or changing their role takes effect immediately.
-4. Admins still create users and reset passwords in the NestJS API, and both services use the same bcrypt format.
+1. The web app shows **Clerk**'s sign-in screen. Clerk handles passwords, Google sign-in, resets and sessions.
+2. Every API request carries a short-lived Clerk session token, which the **NestJS** API verifies, including that it was issued for this website.
+3. The first sign-in links the Clerk account to the CRM user with the same verified email. Without a matching CRM user, access is refused.
+4. The API reloads the user's roles and permissions on every request, so deactivating someone or changing their role takes effect immediately.

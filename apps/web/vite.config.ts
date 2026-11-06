@@ -4,12 +4,11 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // VITE_* settings live in the repo-root .env. Only that prefix ever reaches the browser.
+  envDir: '../..',
   server: {
     port: 5173,
     proxy: {
-      // Sign-in and own-account endpoints → FastAPI auth service. Must come before '/api'.
-      '/api/v1/auth': 'http://localhost:4100',
-      // Everything else → NestJS API.
       '/api': 'http://localhost:4000',
     },
   },

@@ -1,7 +1,6 @@
 import { Controller, Get, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
-import { JwtModule } from '@nestjs/jwt';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule, PrismaService } from './prisma/prisma.service';
@@ -18,6 +17,7 @@ import { FeedbackModule } from './feedback/feedback';
 import { ReportsModule } from './reports/reports';
 import { IntegrationsModule } from './integrations/integrations';
 import { ClientsModule } from './clients/clients';
+import { AuthModule } from './auth/auth';
 
 @Controller('health')
 class HealthController {
@@ -34,18 +34,11 @@ class HealthController {
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../../.env', '.env'] }),
-    JwtModule.registerAsync({
-      global: true,
-      useFactory: () => {
-        const secret = process.env.JWT_SECRET;
-        if (!secret || secret.length < 32) throw new Error('JWT_SECRET must be set to at least 32 characters');
-        return { secret, signOptions: { expiresIn: (process.env.JWT_EXPIRES_IN || '12h') as never } };
-      },
-    }),
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 300 }]),
     PrismaModule,
     CommonModule,
+    AuthModule,
     NotificationsModule,
     UsersModule,
     LeadsModule,

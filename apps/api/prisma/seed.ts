@@ -2,8 +2,7 @@
 // Seeds permissions, built-in roles and the first Super Admin.
 // Run with --demo to also create sample teams, users, leads, calls, tasks and feedback.
 import { PrismaClient, LeadStatus, TaskPriority, TaskStatus } from '@prisma/client';
-import * as bcrypt from 'bcryptjs';
-import { randomBytes } from 'node:crypto';
+import { createClerkClient } from '@clerk/backend';
 import { DEFAULT_ROLES, PERMISSIONS } from '../src/common/permissions';
 
 const prisma = new PrismaClient();
@@ -43,14 +42,13 @@ async function seedRbac() {
   console.log(`✓ ${perms.length} permissions, ${DEFAULT_ROLES.length} roles`);
 }
 
-async function createUser(email: string, fullName: string, roleKey: string, password: string, extra: { phone?: string; teamId?: string } = {}) {
+async function createUser(email: string, fullName: string, roleKey: string, extra: { phone?: string; teamId?: string } = {}) {
   const role = await prisma.role.findUniqueOrThrow({ where: { key: roleKey } });
   return prisma.user.upsert({
     where: { email },
     update: {},
     create: {
       email, fullName, phone: extra.phone, teamId: extra.teamId,
-      passwordHash: await bcrypt.hash(password, 12),
       roles: { create: { roleId: role.id } },
     },
   });
@@ -62,9 +60,15 @@ async function seedAdmin() {
     console.log(`✓ Super Admin ${email} already exists`);
     return;
   }
-  const password = process.env.SEED_ADMIN_PASSWORD || (demo ? 'Admin@12345' : randomBytes(9).toString('base64url'));
-  await createUser(email, 'Super Admin', 'super_admin', password, { phone: '+919800000001' });
-  console.log(`✓ Super Admin created → ${email} / ${password}  (change this password after first login)`);
+  await createUser(email, 'Super Admin', 'super_admin');
+  console.log(`✓ Super Admin created → ${email}`);
+  if (process.env.CLERK_SECRET_KEY) {
+    const origin = (process.env.WEB_ORIGIN || 'http://localhost:5173').split(',')[0].trim();
+    await createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY }).invitations
+      .createInvitation({ emailAddress: email, redirectUrl: `${origin}/sign-up`, ignoreExisting: true, notify: true })
+      .then(() => console.log(`✓ Clerk invitation emailed to ${email}`))
+      .catch((e) => console.warn(`! Could not send the Clerk invitation: ${(e as Error).message}`));
+  }
 }
 
 const pick = <T>(a: T[]) => a[Math.floor(Math.random() * a.length)];
@@ -75,19 +79,18 @@ async function seedDemo() {
     console.log('• Demo data skipped (leads already exist)');
     return;
   }
-  const pw = 'Demo@12345';
   const north = await prisma.team.upsert({ where: { name: 'Sales North' }, update: {}, create: { name: 'Sales North' } });
   const south = await prisma.team.upsert({ where: { name: 'Sales South' }, update: {}, create: { name: 'Sales South' } });
-  const manager = await createUser('manager@prisim.local', 'Meera Kapoor', 'admin', pw, { phone: '+919800000002' });
-  const tlN = await createUser('lead.north@prisim.local', 'Arjun Mehta', 'team_leader', pw, { phone: '+919800000003', teamId: north.id });
-  const tlS = await createUser('lead.south@prisim.local', 'Divya Iyer', 'team_leader', pw, { phone: '+919800000004', teamId: south.id });
+  const manager = await createUser('manager@prisim.local', 'Meera Kapoor', 'admin', { phone: '+919800000002' });
+  const tlN = await createUser('lead.north@prisim.local', 'Arjun Mehta', 'team_leader', { phone: '+919800000003', teamId: north.id });
+  const tlS = await createUser('lead.south@prisim.local', 'Divya Iyer', 'team_leader', { phone: '+919800000004', teamId: south.id });
   await prisma.team.update({ where: { id: north.id }, data: { leaderId: tlN.id } });
   await prisma.team.update({ where: { id: south.id }, data: { leaderId: tlS.id } });
   const emps = [
-    await createUser('rahul@prisim.local', 'Rahul Sharma', 'employee', pw, { phone: '+919800000011', teamId: north.id }),
-    await createUser('priya@prisim.local', 'Priya Nair', 'employee', pw, { phone: '+919800000012', teamId: north.id }),
-    await createUser('karthik@prisim.local', 'Karthik Reddy', 'employee', pw, { phone: '+919800000013', teamId: south.id }),
-    await createUser('sneha@prisim.local', 'Sneha Joshi', 'employee', pw, { phone: '+919800000014', teamId: south.id }),
+    await createUser('rahul@prisim.local', 'Rahul Sharma', 'employee', { phone: '+919800000011', teamId: north.id }),
+    await createUser('priya@prisim.local', 'Priya Nair', 'employee', { phone: '+919800000012', teamId: north.id }),
+    await createUser('karthik@prisim.local', 'Karthik Reddy', 'employee', { phone: '+919800000013', teamId: south.id }),
+    await createUser('sneha@prisim.local', 'Sneha Joshi', 'employee', { phone: '+919800000014', teamId: south.id }),
   ];
 
   const source = await prisma.leadSource.upsert({ where: { key: 'meta_ads' }, update: {}, create: { key: 'meta_ads', name: 'Meta Ads (Google Sheets)' } });
@@ -182,7 +185,7 @@ async function seedDemo() {
   await prisma.feedback.create({
     data: { kind: 'FEEDBACK', category: 'Management', subject: 'Too many leads assigned late in the evening', description: 'Leads assigned after 7pm are hard to call the same day. Could assignment pause after 6pm?', isAnonymous: true, submitterHash: 'demo-anonymous' },
   });
-  console.log(`✓ Demo data: 2 teams, 7 users (password ${pw}), 60 leads, calls, follow-ups, tasks, feedback`);
+  console.log(`✓ Demo data: 2 teams, 7 users, 60 leads, calls, follow-ups, tasks, feedback`);
   console.log('  Logins: manager@prisim.local, lead.north@prisim.local, rahul@prisim.local, priya@prisim.local …');
 }
 

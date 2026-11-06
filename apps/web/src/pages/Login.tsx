@@ -1,48 +1,44 @@
-import { FormEvent, useState } from 'react';
+import { ReactNode } from 'react';
+import { SignIn, SignUp } from '@clerk/react';
+import { ShieldAlert } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import { errMsg } from '../lib/api';
-import { Button, ErrorBox, Field, Input } from '../components/ui';
+import { Button } from '../components/ui';
 
-export default function Login() {
-  const { login } = useAuth();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await login(email, password);
-    } catch (err) {
-      setError(errMsg(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
+function Shell({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-full items-center justify-center bg-[radial-gradient(ellipse_at_top,_var(--color-indigo-50),_#000_65%)] p-4">
-      <div className="w-full max-w-sm">
+      <div className="flex w-full max-w-md flex-col items-center">
         <div className="mb-6 flex flex-col items-center text-white">
           <img src="/prisim-logo.png" alt="Prisim" className="mb-2 h-14 w-auto" />
           <h1 className="text-lg font-semibold tracking-[0.3em] text-indigo-800">CRM</h1>
           <p className="text-sm text-indigo-800">Leads, follow-ups, calls, tasks and feedback in one place</p>
         </div>
-        <form onSubmit={submit} className="space-y-4 rounded-2xl bg-surface p-6 shadow-2xl">
-          <Field label="Email">
-            <Input type="email" autoComplete="username" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
-          </Field>
-          <Field label="Password">
-            <Input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
-          </Field>
-          {error && <ErrorBox error={error} />}
-          <Button type="submit" loading={busy} className="w-full">Sign in</Button>
-          <p className="text-center text-xs text-slate-500">Forgot your password? Ask your administrator to reset it.</p>
-        </form>
+        {children}
       </div>
     </div>
+  );
+}
+
+export default function Login() {
+  return <Shell><SignIn routing="path" path="/login" signUpUrl="/sign-up" fallbackRedirectUrl="/" /></Shell>;
+}
+
+/** Reached from a Clerk invitation email. */
+export function Register() {
+  return <Shell><SignUp routing="path" path="/sign-up" signInUrl="/login" fallbackRedirectUrl="/" /></Shell>;
+}
+
+/** Signed in with Clerk, but not allowed into the CRM. */
+export function NoAccess() {
+  const { denied, logout } = useAuth();
+  return (
+    <Shell>
+      <div className="w-full space-y-4 rounded-2xl bg-surface p-6 text-center shadow-2xl">
+        <ShieldAlert className="mx-auto h-10 w-10 text-amber-400" />
+        <p className="font-semibold">You can't open Prisim CRM yet</p>
+        <p className="text-sm text-slate-600">{denied}</p>
+        <Button variant="secondary" className="w-full" onClick={logout}>Sign out</Button>
+      </div>
+    </Shell>
   );
 }

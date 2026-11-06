@@ -6,6 +6,9 @@ COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
 RUN npm ci --workspace apps/web --include-workspace-root=false
 COPY apps/web apps/web
+# Public by design; Vite builds it into the web app.
+ARG VITE_CLERK_PUBLISHABLE_KEY
+ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY
 RUN npm run build -w apps/web
 
 FROM caddy:2-alpine

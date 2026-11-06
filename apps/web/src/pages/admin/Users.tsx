@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { KeyRound, Pencil, Plus, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
+import { KeyRound, Mail, Pencil, Plus, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api, errMsg } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
@@ -24,17 +24,21 @@ function UserModal({ user, onClose }: { user: UserRow | 'new'; onClose: () => vo
   const isNew = user === 'new';
   const [f, setF] = useState({
     fullName: isNew ? '' : user.fullName, email: isNew ? '' : user.email, phone: isNew ? '' : user.phone ?? '',
-    teamId: isNew ? '' : user.teamId ?? '', roleKeys: isNew ? ['employee'] : user.roles.map((r) => r.role.key), password: '',
+    teamId: isNew ? '' : user.teamId ?? '', roleKeys: isNew ? ['employee'] : user.roles.map((r) => r.role.key),
   });
   const m = useMutation({
     mutationFn: () => isNew
-      ? api.post('/users', { ...f, phone: f.phone || undefined, teamId: f.teamId || undefined })
+      ? api.post<{ inviteSent?: boolean }>('/users', { ...f, phone: f.phone || undefined, teamId: f.teamId || undefined })
       : api.patch(`/users/${user.id}`, { fullName: f.fullName, email: f.email, phone: f.phone || null, teamId: f.teamId || null, roleKeys: f.roleKeys }),
-    onSuccess: () => { toast.success(isNew ? 'User created' : 'User updated'); qc.invalidateQueries({ queryKey: ['users'] }); qc.invalidateQueries({ queryKey: ['directory'] }); onClose(); },
+    onSuccess: (r) => {
+      if (isNew && !(r as { inviteSent?: boolean }).inviteSent) toast.warning('User created, but the invitation email failed. Use the mail button to resend it.');
+      else toast.success(isNew ? 'User created. Invitation sent by email.' : 'User updated');
+      qc.invalidateQueries({ queryKey: ['users'] }); qc.invalidateQueries({ queryKey: ['directory'] }); onClose();
+    },
   });
   return (
     <Modal open onClose={onClose} title={isNew ? 'Add user' : `Edit ${user.fullName}`}
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={m.isPending} onClick={() => m.mutate()} disabled={!f.fullName || !f.email || !f.roleKeys.length || (isNew && f.password.length < 8)}>Save</Button></>}>
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={m.isPending} onClick={() => m.mutate()} disabled={!f.fullName || !f.email || !f.roleKeys.length}>Save</Button></>}>
       <Field label="Full name"><Input value={f.fullName} onChange={(e) => setF({ ...f, fullName: e.target.value })} /></Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Email (login)"><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
@@ -55,7 +59,26 @@ function UserModal({ user, onClose }: { user: UserRow | 'new'; onClose: () => vo
           ))}
         </div>
       </Field>
-      {isNew && <Field label="Temporary password" hint="At least 8 characters. Ask them to change it after first login."><Input type="text" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></Field>}
+      {isNew && <p className="text-xs text-slate-500">They'll get an email invitation to create their sign-in. It must be this exact email address.</p>}
+      <ErrorBox error={m.error} />
+    </Modal>
+  );
+}
+
+function ResetPasswordModal({ user, onClose }: { user: UserRow; onClose: () => void }) {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const m = useMutation({
+    mutationFn: () => api.post(`/users/${user.id}/reset-password`, { password }),
+    onSuccess: () => { toast.success(`Password changed for ${user.fullName}`); onClose(); },
+  });
+  return (
+    <Modal open onClose={onClose} title={`Reset password for ${user.fullName}`}
+      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={m.isPending} disabled={!password || password !== confirm} onClick={() => m.mutate()}>Reset password</Button></>}>
+      <p className="text-sm text-slate-600">They'll be signed out on all devices and must use this password next time. Give it to them privately.</p>
+      <Field label="New password" hint="Must meet your Clerk password rules (currently 15 characters or more)."><Input type="text" autoComplete="off" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+      <Field label="Confirm new password"><Input type="text" autoComplete="off" value={confirm} onChange={(e) => setConfirm(e.target.value)} /></Field>
+      {confirm && confirm !== password && <p className="text-sm text-rose-400">Passwords don't match</p>}
       <ErrorBox error={m.error} />
     </Modal>
   );
@@ -93,6 +116,7 @@ export default function AdminUsers() {
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<UserRow | 'new' | null>(null);
   const [team, setTeam] = useState<Team | 'new' | null>(null);
+  const [resetting, setResetting] = useState<UserRow | null>(null);
   const users = useQuery({ queryKey: ['users', search], queryFn: () => api.get<UserRow[]>('/users', { search }) });
   const teams = useTeams();
   const manage = can('users.manage');
@@ -102,10 +126,17 @@ export default function AdminUsers() {
     try { await api.patch(`/users/${u.id}`, { isActive: !u.isActive }); qc.invalidateQueries({ queryKey: ['users'] }); qc.invalidateQueries({ queryKey: ['directory'] }); }
     catch (e) { toast.error(errMsg(e)); }
   };
-  const resetPw = async (u: UserRow) => {
-    const password = prompt(`New temporary password for ${u.fullName} (min 8 characters):`);
-    if (!password) return;
-    try { await api.post(`/users/${u.id}/reset-password`, { password }); toast.success('Password reset'); } catch (e) { toast.error(errMsg(e)); }
+  const remove = async (u: UserRow) => {
+    const ok = confirm(`Delete ${u.fullName}?\n\nThey lose all access and their Clerk sign-in is removed. Their open leads go to Unassigned, open tasks lose their assignee and pending follow-ups are cancelled. Past calls and records keep their name.\n\nThis cannot be undone.`);
+    if (!ok) return;
+    try {
+      const r = await api.del<{ released: { leads: number; followUps: number; tasks: number } }>(`/users/${u.id}`);
+      toast.success(`${u.fullName} deleted. Released ${r.released.leads} leads and ${r.released.tasks} tasks; cancelled ${r.released.followUps} follow-ups.`);
+      for (const k of ['users', 'directory', 'users-perm-list', 'leads', 'teams']) qc.invalidateQueries({ queryKey: [k] });
+    } catch (e) { toast.error(errMsg(e)); }
+  };
+  const invite = async (u: UserRow) => {
+    try { await api.post(`/users/${u.id}/invite`); toast.success(`Invitation sent to ${u.email}`); } catch (e) { toast.error(errMsg(e)); }
   };
 
   return (
@@ -131,8 +162,10 @@ export default function AdminUsers() {
                       {can('roles.manage') && <Button size="sm" variant="ghost" onClick={() => nav(`/admin/roles?tab=user&user=${u.id}`)} title="Individual permissions"><ShieldCheck className="h-4 w-4" /></Button>}
                       {manage && <>
                       <Button size="sm" variant="ghost" onClick={() => setEditing(u)} title="Edit"><Pencil className="h-4 w-4" /></Button>
-                      <Button size="sm" variant="ghost" onClick={() => resetPw(u)} title="Reset password"><KeyRound className="h-4 w-4" /></Button>
+                      <Button size="sm" variant="ghost" onClick={() => setResetting(u)} title="Reset password"><KeyRound className="h-4 w-4" /></Button>
+                      <Button size="sm" variant="ghost" onClick={() => invite(u)} title="Send sign-in invitation"><Mail className="h-4 w-4" /></Button>
                       {u.id !== me?.id && <Button size="sm" variant="ghost" onClick={() => toggleActive(u)}>{u.isActive ? 'Deactivate' : 'Activate'}</Button>}
+                      {u.id !== me?.id && <Button size="sm" variant="ghost" onClick={() => remove(u)} title="Delete user"><Trash2 className="h-4 w-4 text-rose-400" /></Button>}
                       </>}
                     </Td>
                   )}
@@ -170,6 +203,7 @@ export default function AdminUsers() {
       </Card>
       {editing && <UserModal user={editing} onClose={() => setEditing(null)} />}
       {team && <TeamModal team={team} onClose={() => setTeam(null)} />}
+      {resetting && <ResetPasswordModal user={resetting} onClose={() => setResetting(null)} />}
     </div>
   );
 }

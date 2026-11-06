@@ -17,12 +17,16 @@ model User {
   fullName     String
   email        String   @unique
   phone        String? // agent phone in E.164, used for click-to-call
-  passwordHash String
+  // Sign-in is handled by Clerk. Filled in the first time this person signs in.
+  clerkUserId  String?  @unique
+  passwordHash String? // legacy, unused since the move to Clerk
   isActive     Boolean  @default(true)
   timezone     String   @default("Asia/Kolkata")
   teamId       String?  @db.Uuid
   team         Team?    @relation("TeamMembers", fields: [teamId], references: [id])
   lastLoginAt  DateTime?
+  // Deleted users stay as rows so past calls, leads and audit entries keep their name.
+  deletedAt    DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

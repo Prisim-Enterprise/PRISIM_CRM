@@ -1,22 +1,22 @@
 import {
-  BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, Injectable, Module,
+  BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, Injectable, Logger, Module,
   NotFoundException, Param, ParseUUIDPipe, Patch, Post, Put, Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { ArrayUnique, IsArray, IsBoolean, IsEmail, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
+import { ArrayUnique, IsArray, IsBoolean, IsEmail, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { AuthUser, CurrentUser, RequireAny } from '../common/current-user';
 import { PERMISSIONS } from '../common/permissions';
 import { normalizePhone } from '../common/phone';
-import { hashPassword } from '../auth/auth';
+import { clerkIdByEmail, removeFromClerk, sendInvitation, setClerkPassword } from '../common/clerk';
+import { CLOSED_STATUSES } from '../leads/lead-status';
 
 class CreateUserDto {
   @IsString() @MinLength(2) fullName: string;
   @IsEmail() email: string;
   @IsOptional() @IsString() phone?: string;
-  @IsString() @MinLength(8) password: string;
   @IsOptional() @IsUUID() teamId?: string | null;
   @IsArray() @IsString({ each: true }) roleKeys: string[];
 }
@@ -32,7 +32,7 @@ class UpdateUserDto {
 }
 
 class ResetPasswordDto {
-  @IsString() @MinLength(8) password: string;
+  @IsString() @MinLength(8) @MaxLength(72) password: string;
 }
 
 class UserPermissionsDto {
@@ -63,6 +63,7 @@ const userSelect = {
 
 @Injectable()
 export class UsersService {
+  private log = new Logger('Users');
   constructor(private prisma: PrismaService, private audit: AuditService) {}
 
   private async rolesFor(keys: string[], actor: AuthUser) {
@@ -84,17 +85,100 @@ export class UsersService {
     const user = await this.prisma.user.create({
       data: {
         fullName: dto.fullName.trim(), email, phone, teamId: dto.teamId ?? null,
-        passwordHash: await hashPassword(dto.password),
         roles: { create: roles.map((r) => ({ roleId: r.id })) },
       },
       select: userSelect,
     });
     await this.audit.record({ actorId: actor.id, action: 'user.created', entityType: 'user', entityId: user.id, after: { email, roles: dto.roleKeys } });
-    return user;
+    return { ...user, inviteSent: await this.invite(email) };
+  }
+
+  /** The user exists even if the email fails, so a failed invite is reported, not thrown. */
+  private async invite(email: string) {
+    try {
+      await sendInvitation(email);
+      return true;
+    } catch (e) {
+      this.log.error(`Clerk invitation failed: ${(e as Error).message}`);
+      return false;
+    }
+  }
+
+  /** Loads a user an admin may act on. Only a Super Admin may act on a Super Admin. */
+  private async target(id: string, actor: AuthUser) {
+    const target = await this.prisma.user.findFirst({ where: { id, deletedAt: null }, select: { ...userSelect, clerkUserId: true } });
+    if (!target) throw new NotFoundException('User not found');
+    if (target.roles.some((r) => r.role.key === 'super_admin') && !actor.permissions.has('roles.manage')) {
+      throw new ForbiddenException('Only a Super Admin can do this to a Super Admin account');
+    }
+    return target;
+  }
+
+  async resetPassword(id: string, password: string, actor: AuthUser) {
+    const target = await this.target(id, actor);
+    const clerkId = target.clerkUserId ?? (await clerkIdByEmail(target.email));
+    if (!clerkId) throw new BadRequestException(`${target.fullName} has not created a sign-in yet. Send them the invitation instead.`);
+    const problem = await setClerkPassword(clerkId, password);
+    if (problem) throw new BadRequestException(problem);
+    await this.audit.record({ actorId: actor.id, action: 'user.password_reset', entityType: 'user', entityId: id });
+    return { ok: true };
+  }
+
+  /**
+   * Removes a person from the CRM. The row stays so past calls and leads keep their name;
+   * they vanish from lists, lose all access, and their open work is released.
+   */
+  async remove(id: string, actor: AuthUser) {
+    if (id === actor.id) throw new BadRequestException('You cannot delete your own account');
+    const target = await this.target(id, actor);
+    if (target.email === 'system@prisim.internal') throw new BadRequestException('This account cannot be deleted');
+    if (target.roles.some((r) => r.role.key === 'super_admin')) {
+      const others = await this.prisma.user.count({
+        where: { id: { not: id }, isActive: true, deletedAt: null, roles: { some: { role: { key: 'super_admin' } } } },
+      });
+      if (!others) throw new BadRequestException('This is the last Super Admin, so it cannot be deleted');
+    }
+    const reason = `${target.fullName} was removed from the CRM`;
+    const released = await this.prisma.$transaction(async (tx) => {
+      const leads = await tx.lead.findMany({ where: { assignedUserId: id, status: { notIn: CLOSED_STATUSES } }, select: { id: true, status: true } });
+      const leadIds = leads.map((l) => l.id);
+      await tx.lead.updateMany({ where: { id: { in: leadIds } }, data: { assignedUserId: null, status: 'UNASSIGNED' } });
+      await tx.leadStatusHistory.createMany({ data: leads.map((l) => ({ leadId: l.id, fromStatus: l.status, toStatus: 'UNASSIGNED' as const, actorId: actor.id, reason })) });
+      await tx.leadAssignment.updateMany({ where: { userId: id, endedAt: null }, data: { endedAt: new Date() } });
+      const followUps = await tx.followUp.updateMany({ where: { ownerId: id, status: 'PENDING' }, data: { status: 'CANCELLED', cancelReason: reason } });
+      const tasks = await tx.task.updateMany({ where: { assigneeId: id, status: { not: 'DONE' } }, data: { assigneeId: null } });
+      await tx.clientWorkAssignee.deleteMany({ where: { userId: id } });
+      await tx.feedback.updateMany({ where: { assignedAdminId: id, status: { notIn: ['RESOLVED', 'CLOSED'] } }, data: { assignedAdminId: null } });
+      await tx.team.updateMany({ where: { leaderId: id }, data: { leaderId: null } });
+      await tx.userRole.deleteMany({ where: { userId: id } });
+      await tx.userPermission.deleteMany({ where: { userId: id } });
+      await tx.user.update({
+        where: { id },
+        // Frees the email so the same person can be added again later.
+        data: { deletedAt: new Date(), isActive: false, email: `deleted-${id}@prisim.internal`, phone: null, teamId: null, clerkUserId: null },
+      });
+      return { leads: leads.length, followUps: followUps.count, tasks: tasks.count };
+    });
+    let clerkRemoved = true;
+    try {
+      await removeFromClerk(target.clerkUserId, target.email);
+    } catch (e) {
+      clerkRemoved = false; // The CRM already refuses this account, so this only leaves an unused Clerk login.
+      this.log.error(`Could not remove the Clerk account: ${(e as Error).message}`);
+    }
+    await this.audit.record({ actorId: actor.id, action: 'user.deleted', entityType: 'user', entityId: id, before: { fullName: target.fullName, email: target.email }, after: released });
+    return { ok: true, released, clerkRemoved };
+  }
+
+  async resendInvite(id: string, actor: AuthUser) {
+    const target = await this.target(id, actor);
+    if (!(await this.invite(target.email))) throw new BadRequestException('Clerk could not send the invitation. They may already have an account: ask them to sign in.');
+    await this.audit.record({ actorId: actor.id, action: 'user.invited', entityType: 'user', entityId: id });
+    return { ok: true };
   }
 
   async update(id: string, dto: UpdateUserDto, actor: AuthUser) {
-    const before = await this.prisma.user.findUnique({ where: { id }, select: userSelect });
+    const before = await this.prisma.user.findFirst({ where: { id, deletedAt: null }, select: userSelect });
     if (!before) throw new NotFoundException('User not found');
     if (before.roles.some((r) => r.role.key === 'super_admin') && !actor.permissions.has('roles.manage')) {
       throw new ForbiddenException('Only a Super Admin can edit a Super Admin account');
@@ -102,7 +186,11 @@ export class UsersService {
     if (id === actor.id && dto.isActive === false) throw new BadRequestException('You cannot deactivate your own account');
     const data: Prisma.UserUpdateInput = {};
     if (dto.fullName !== undefined) data.fullName = dto.fullName.trim();
-    if (dto.email !== undefined) data.email = dto.email.toLowerCase().trim();
+    if (dto.email !== undefined) {
+      data.email = dto.email.toLowerCase().trim();
+      // The old Clerk account must lose access; the new email links on its first sign-in.
+      if (data.email !== before.email) data.clerkUserId = null;
+    }
     if (dto.timezone !== undefined) data.timezone = dto.timezone;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     if (dto.teamId !== undefined) data.team = dto.teamId ? { connect: { id: dto.teamId } } : { disconnect: true };
@@ -134,7 +222,7 @@ export class UsersController {
   @Get('directory')
   directory() {
     return this.prisma.user.findMany({
-      where: { isActive: true },
+      where: { isActive: true, deletedAt: null },
       select: { id: true, fullName: true, teamId: true, roles: { select: { role: { select: { key: true } } } } },
       orderBy: { fullName: 'asc' },
     });
@@ -146,6 +234,7 @@ export class UsersController {
     return this.prisma.user.findMany({
       where: {
         email: { not: 'system@prisim.internal' },
+        deletedAt: null,
         ...(teamId ? { teamId } : {}),
         ...(search ? { OR: [{ fullName: { contains: search, mode: 'insensitive' } }, { email: { contains: search, mode: 'insensitive' } }] } : {}),
       },
@@ -220,15 +309,20 @@ export class UsersController {
 
   @Post(':id/reset-password')
   @RequireAny('users.manage')
-  async resetPassword(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ResetPasswordDto, @CurrentUser() actor: AuthUser) {
-    const target = await this.prisma.user.findUnique({ where: { id }, select: userSelect });
-    if (!target) throw new NotFoundException('User not found');
-    if (target.roles.some((r) => r.role.key === 'super_admin') && !actor.permissions.has('roles.manage')) {
-      throw new ForbiddenException('Only a Super Admin can reset a Super Admin password');
-    }
-    await this.prisma.user.update({ where: { id }, data: { passwordHash: await hashPassword(dto.password) } });
-    await this.audit.record({ actorId: actor.id, action: 'user.password_reset', entityType: 'user', entityId: id });
-    return { ok: true };
+  resetPassword(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ResetPasswordDto, @CurrentUser() actor: AuthUser) {
+    return this.users.resetPassword(id, dto.password, actor);
+  }
+
+  @Delete(':id')
+  @RequireAny('users.manage')
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() actor: AuthUser) {
+    return this.users.remove(id, actor);
+  }
+
+  @Post(':id/invite')
+  @RequireAny('users.manage')
+  invite(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() actor: AuthUser) {
+    return this.users.resendInvite(id, actor);
   }
 }
 

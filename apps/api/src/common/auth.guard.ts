@@ -1,13 +1,16 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser, IS_PUBLIC, REQUIRED_PERMS } from './current-user';
+import { verifiedPrimaryEmail, verifyClerkToken } from './clerk';
 
-/** Global guard: verifies the JWT, loads the user's live roles/permissions, enforces @RequireAny. */
+/** The web app shows a "no access" screen for this message. */
+export const NO_ACCESS = 'This account has not been added to Prisim CRM. Ask your administrator.';
+
+/** Global guard: verifies the Clerk session token, loads the user's live roles/permissions, enforces @RequireAny. */
 @Injectable()
 export class AuthGuard implements CanActivate {
-  constructor(private reflector: Reflector, private jwt: JwtService, private prisma: PrismaService) {}
+  constructor(private reflector: Reflector, private prisma: PrismaService) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const targets = [ctx.getHandler(), ctx.getClass()];
@@ -18,20 +21,33 @@ export class AuthGuard implements CanActivate {
     const token = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
     if (!token) throw new UnauthorizedException('Not signed in');
 
-    let payload: { sub: string; typ?: string };
+    let clerkUserId: string;
     try {
-      payload = await this.jwt.verifyAsync(token);
+      clerkUserId = await verifyClerkToken(token);
     } catch {
       throw new UnauthorizedException('Session expired. Please sign in again.');
     }
-    if (payload.typ && payload.typ !== 'access') throw new UnauthorizedException('Invalid token');
-    req.user = await this.loadUser(payload.sub);
+    req.user = await this.loadUser(await this.crmUserId(clerkUserId));
 
     const required = this.reflector.getAllAndOverride<string[]>(REQUIRED_PERMS, targets);
     if (required?.length && !required.some((p) => (req.user as AuthUser).permissions.has(p))) {
       throw new ForbiddenException('You do not have permission for this action');
     }
     return true;
+  }
+
+  /**
+   * Finds the CRM user for a Clerk account. The first sign-in links them by verified email.
+   * A Clerk account alone gives no access: someone must have added this person to the CRM.
+   */
+  private async crmUserId(clerkUserId: string): Promise<string> {
+    const linked = await this.prisma.user.findUnique({ where: { clerkUserId }, select: { id: true } });
+    if (linked) return linked.id;
+    const email = await verifiedPrimaryEmail(clerkUserId);
+    const user = email ? await this.prisma.user.findUnique({ where: { email }, select: { id: true, clerkUserId: true } }) : null;
+    if (!user || (user.clerkUserId && user.clerkUserId !== clerkUserId)) throw new ForbiddenException(NO_ACCESS);
+    await this.prisma.user.update({ where: { id: user.id }, data: { clerkUserId } });
+    return user.id;
   }
 
   async loadUser(id: string): Promise<AuthUser> {

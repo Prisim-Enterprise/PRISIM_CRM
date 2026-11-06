@@ -22,7 +22,7 @@ if (cmd === 'setup' || !existsSync(venvPy)) {
 
 const args = cmd === 'test'
   ? ['-m', 'pytest', '-q']
-  : ['-m', 'uvicorn', 'app.main:app', '--port', process.env.AUTH_PORT || '4100', '--reload'];
+  : ['-m', 'uvicorn', 'app.main:app', '--port', process.env.AUTH_PORT || '4100', ...(cmd === 'serve' ? [] : ['--reload'])];
 const child = spawn(venvPy, args, { cwd: dir, stdio: 'inherit' });
 child.on('exit', (code) => process.exit(code ?? 0));
 for (const s of ['SIGINT', 'SIGTERM']) process.on(s, () => child.kill(s));

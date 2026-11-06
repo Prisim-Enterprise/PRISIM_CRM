@@ -1,6 +1,6 @@
 # Deploying Prisim CRM on Oracle Cloud (Always Free)
 
-The whole stack runs on one free **Ampere A1** VM: PostgreSQL, the FastAPI auth service, the NestJS API, and the web app behind Caddy, which handles HTTPS automatically and routes `/api/v1/auth/*` to the auth service.
+The whole stack runs on one free **Ampere A1** VM: PostgreSQL, the NestJS API, and the web app behind Caddy, which handles HTTPS automatically and routes `/api/v1/auth/*` to the auth service.
 
 > **Why not Oracle Autonomous Database?** It's Oracle SQL. Prisma (and this schema) target PostgreSQL. The free A1 VM (up to 4 OCPU / 24 GB RAM / 200 GB disk) runs PostgreSQL comfortably for this workload.
 
@@ -40,13 +40,13 @@ Set at least these in `.env`:
 NODE_ENV=production
 DOMAIN=crm.yourcompany.in
 POSTGRES_PASSWORD=<long random>
-JWT_SECRET=<64 random hex chars>          # openssl rand -hex 32
+VITE_CLERK_PUBLISHABLE_KEY=<from Clerk>
+CLERK_SECRET_KEY=<from Clerk>
 FEEDBACK_HASH_SECRET=<random>             # never change it after go-live
 WEB_ORIGIN=https://crm.yourcompany.in
 PUBLIC_API_URL=https://crm.yourcompany.in
 TELEPHONY_WEBHOOK_SECRET=<random>
 SEED_ADMIN_EMAIL=you@yourcompany.in
-SEED_ADMIN_PASSWORD=<strong password>
 ```
 
 `DATABASE_URL` is set by the compose file. You don't need it in `.env` on the server.
@@ -101,5 +101,4 @@ Database migrations run automatically when the API container starts.
 ## Health and logs
 
 - `https://crm.yourcompany.in/health` returns `{"status":"ok"}` when the API and database are up.
-- `docker compose -f docker-compose.prod.yml logs -f api` (or `auth`)
-- `https://crm.yourcompany.in/api/v1/auth/health` checks the auth service
+- `docker compose -f docker-compose.prod.yml logs -f api`

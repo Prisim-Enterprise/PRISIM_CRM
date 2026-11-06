@@ -14,7 +14,9 @@ for (const p of [resolve(process.cwd(), '../../.env'), resolve(process.cwd(), '.
 async function bootstrap() {
   const { AppModule } = await import('./app.module');
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { logger: ['log', 'warn', 'error'] });
-  app.set('trust proxy', 1);
+  // Proxies in front of the API (1 = Caddy on a server; 3 = Vercel → ngrok → local gateway).
+  // Needed so rate limits and the audit log see each person's real IP, not the proxy's.
+  app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' } }));
   app.enableCors({ origin: (process.env.WEB_ORIGIN || 'http://localhost:5173').split(','), credentials: false });
   app.useBodyParser('json', { limit: '1mb' });

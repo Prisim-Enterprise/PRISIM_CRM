@@ -13,12 +13,12 @@
     "db:seed": "npm run seed -w apps/api",
     "dev:api": "npm run start:dev -w apps/api",
     "dev:web": "npm run dev -w apps/web",
-    "dev": "concurrently -n db,auth,api,web -c gray,magenta,blue,green \"npm run db:start\" \"npm run dev:auth\" \"npm run dev:api\" \"npm run dev:web\"",
+    "dev": "concurrently -n db,api,web -c gray,blue,green \"npm run db:start\" \"npm run dev:api\" \"npm run dev:web\"",
     "build": "npm run build -w apps/api && npm run build -w apps/web",
-    "test": "npm run test -w apps/api && npm run test:auth",
-    "setup:auth": "node scripts/auth.mjs setup",
-    "dev:auth": "node scripts/auth.mjs dev",
-    "test:auth": "node scripts/auth.mjs test"
+    "test": "npm run test -w apps/api",
+    "serve:api": "npm run build -w apps/api && npm run start -w apps/api",
+    "serve:tunnel": "node scripts/tunnel.mjs",
+    "serve": "concurrently -n db,api,tunnel -c gray,blue,green \"npm run db:start\" \"npm run serve:api\" \"npm run serve:tunnel\""
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

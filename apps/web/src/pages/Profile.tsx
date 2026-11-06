@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useClerk } from '@clerk/react';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api } from '../lib/api';
@@ -8,14 +9,10 @@ import { Badge, Button, Card, ErrorBox, Field, Input, PageHeader } from '../comp
 export default function Profile() {
   const { me, refresh } = useAuth();
   const [phone, setPhone] = useState(me?.phone ?? '');
-  const [pw, setPw] = useState({ currentPassword: '', newPassword: '', confirm: '' });
+  const clerk = useClerk();
   const savePhone = useMutation({
     mutationFn: () => api.patch('/auth/me', { phone: phone || null }),
     onSuccess: () => { toast.success('Profile updated'); refresh(); },
-  });
-  const changePw = useMutation({
-    mutationFn: () => api.post('/auth/change-password', { currentPassword: pw.currentPassword, newPassword: pw.newPassword }),
-    onSuccess: () => { toast.success('Password changed'); setPw({ currentPassword: '', newPassword: '', confirm: '' }); },
   });
   return (
     <div className="max-w-2xl space-y-5">
@@ -37,14 +34,10 @@ export default function Profile() {
           <ErrorBox error={savePhone.error} />
         </div>
       </Card>
-      <Card title="Change password">
+      <Card title="Password and security">
         <div className="space-y-3 p-5">
-          <Field label="Current password"><Input type="password" value={pw.currentPassword} onChange={(e) => setPw({ ...pw, currentPassword: e.target.value })} /></Field>
-          <Field label="New password" hint="At least 8 characters"><Input type="password" value={pw.newPassword} onChange={(e) => setPw({ ...pw, newPassword: e.target.value })} /></Field>
-          <Field label="Confirm new password"><Input type="password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} /></Field>
-          {pw.confirm && pw.confirm !== pw.newPassword && <p className="text-sm text-rose-400">Passwords don't match</p>}
-          <ErrorBox error={changePw.error} />
-          <Button loading={changePw.isPending} disabled={pw.newPassword.length < 8 || pw.newPassword !== pw.confirm} onClick={() => changePw.mutate()}>Change password</Button>
+          <p className="text-sm text-slate-600">Change your password, connected accounts and active devices.</p>
+          <Button variant="secondary" onClick={() => clerk.openUserProfile()}>Manage sign-in</Button>
         </div>
       </Card>
     </div>

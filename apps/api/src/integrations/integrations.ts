@@ -20,7 +20,6 @@ import { NotificationsService } from '../notifications/notifications';
 import { PageQuery, paged, skipTake } from '../common/pagination';
 import { LeadsModule } from '../leads/leads.controller';
 import { LeadsService } from '../leads/leads.service';
-import { hashPassword } from '../auth/auth';
 import {
   DEFAULT_MAPPING, FieldMapping, headerKey, NormalizedLead, normalizeRow, parseCsv, resolveColumns, RowRejected, rowsToObjects,
 } from './lead-ingest';
@@ -259,7 +258,7 @@ export class LeadSyncService {
     const email = 'system@prisim.internal';
     const user = await this.prisma.user.upsert({
       where: { email }, update: {},
-      create: { email, fullName: 'System (auto-assign)', isActive: false, passwordHash: await hashPassword(randomBytes(32).toString('hex')) },
+      create: { email, fullName: 'System (auto-assign)', isActive: false },
     });
     return { id: user.id, fullName: user.fullName, email, teamId: null, roleKeys: [], permissions: new Set(['leads.assign.all']), teamIds: [] };
   }

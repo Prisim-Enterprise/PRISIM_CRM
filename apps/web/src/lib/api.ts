@@ -1,11 +1,8 @@
 const BASE = '/api/v1';
-const TOKEN_KEY = 'prisim.token';
 
-export const tokenStore = {
-  get: () => localStorage.getItem(TOKEN_KEY),
-  set: (t: string) => localStorage.setItem(TOKEN_KEY, t),
-  clear: () => localStorage.removeItem(TOKEN_KEY),
-};
+/** Clerk session tokens are short-lived, so each request asks Clerk for a current one. */
+let getToken: () => Promise<string | null> = async () => null;
+export const setTokenGetter = (fn: () => Promise<string | null>) => { getToken = fn; };
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public body?: unknown) {
@@ -26,21 +23,23 @@ export function qs(q?: Query) {
   return s ? `?${s}` : '';
 }
 
+/** Sent on every request. The skip header stops ngrok's free-plan warning page from replacing API replies. */
+const baseHeaders = async (): Promise<Record<string, string>> => {
+  const token = await getToken();
+  return { 'ngrok-skip-browser-warning': '1', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+};
+
 async function request<T>(method: string, path: string, body?: unknown, query?: Query): Promise<T> {
-  const token = tokenStore.get();
   const isForm = body instanceof FormData;
   const res = await fetch(BASE + path + qs(query), {
     method,
     headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(await baseHeaders()),
       ...(body !== undefined && !isForm ? { 'Content-Type': 'application/json' } : {}),
     },
     body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
   });
-  if (res.status === 401 && path !== '/auth/login') {
-    tokenStore.clear();
-    window.dispatchEvent(new Event('prisim:logout'));
-  }
+  if (res.status === 401 && path !== '/auth/me') window.dispatchEvent(new Event('prisim:logout'));
   const text = await res.text();
   const data = text ? (() => { try { return JSON.parse(text); } catch { return text; } })() : undefined;
   if (!res.ok) {
@@ -63,7 +62,7 @@ export const api = {
   },
   /** Fetches a protected file and returns an object URL (audio players can't send auth headers). */
   blobUrl: async (path: string) => {
-    const res = await fetch(BASE + path, { headers: { Authorization: `Bearer ${tokenStore.get()}` } });
+    const res = await fetch(BASE + path, { headers: await baseHeaders() });
     if (!res.ok) {
       const t = await res.text();
       throw new ApiError(res.status, (() => { try { return JSON.parse(t).message; } catch { return res.statusText; } })());
@@ -71,7 +70,7 @@ export const api = {
     return URL.createObjectURL(await res.blob());
   },
   download: async (path: string, query?: Query, fallbackName = 'download') => {
-    const res = await fetch(BASE + path + qs(query), { headers: { Authorization: `Bearer ${tokenStore.get()}` } });
+    const res = await fetch(BASE + path + qs(query), { headers: await baseHeaders() });
     if (!res.ok) throw new ApiError(res.status, 'Download failed');
     const name = res.headers.get('content-disposition')?.match(/filename="([^"]+)"/)?.[1] ?? fallbackName;
     const url = URL.createObjectURL(await res.blob());

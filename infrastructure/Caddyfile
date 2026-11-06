@@ -1,4 +1,4 @@
-# Set DOMAIN in .env (e.g. crm.prisim.in). Caddy gets and renews the HTTPS certificate automatically.
+# Set DOMAIN in .env (e.g. crm.prisim.co.in). Caddy gets and renews the HTTPS certificate automatically.
 {$DOMAIN:localhost} {
 	encode gzip
 	header {
@@ -6,10 +6,6 @@
 		X-Content-Type-Options nosniff
 		Referrer-Policy strict-origin-when-cross-origin
 		-Server
-	}
-	# Sign-in and own-account endpoints are served by the FastAPI auth service.
-	handle /api/v1/auth/* {
-		reverse_proxy auth:4100
 	}
 	handle /api/* {
 		reverse_proxy api:4000
