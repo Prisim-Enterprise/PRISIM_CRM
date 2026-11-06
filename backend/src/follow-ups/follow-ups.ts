@@ -294,5 +294,5 @@ export class FollowUpsController {
   }
 }
 
-@Module({ imports: [LeadsModule], providers: [FollowUpsService, FollowUpReminders], controllers: [FollowUpsController] })
+@Module({ imports: [LeadsModule], providers: [FollowUpsService, FollowUpReminders], exports: [FollowUpReminders], controllers: [FollowUpsController] })
 export class FollowUpsModule {}

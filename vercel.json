@@ -1,11 +1,18 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "npm ci --workspace frontend --include-workspace-root",
-  "buildCommand": "npm run build --workspace frontend",
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build:vercel",
   "outputDirectory": "frontend/dist",
   "framework": null,
+  "regions": ["bom1"],
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "{backend/dist/**,node_modules/.prisma/client/**}",
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://NGROK_DOMAIN/api/:path*" },
+    { "source": "/api/:path*", "destination": "/api/index" },
     { "source": "/((?!assets/).*)", "destination": "/index.html" }
   ],
   "headers": [

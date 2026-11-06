@@ -16,6 +16,7 @@ import { TasksModule } from './tasks/tasks';
 import { FeedbackModule } from './feedback/feedback';
 import { ReportsModule } from './reports/reports';
 import { IntegrationsModule } from './integrations/integrations';
+import { JobsModule } from './jobs/jobs';
 import { ClientsModule } from './clients/clients';
 import { AuthModule } from './auth/auth';
 
@@ -34,7 +35,8 @@ class HealthController {
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ['../.env', '.env'] }),
-    ScheduleModule.forRoot(),
+    // Vercel functions sleep between requests, so /internal/tick runs these jobs there instead.
+    ...(process.env.VERCEL ? [] : [ScheduleModule.forRoot()]),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 300 }]),
     PrismaModule,
     CommonModule,
@@ -49,6 +51,7 @@ class HealthController {
     ReportsModule,
     IntegrationsModule,
     ClientsModule,
+    JobsModule,
   ],
   controllers: [HealthController],
   providers: [

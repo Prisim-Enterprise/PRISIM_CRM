@@ -1,10 +1,9 @@
 import {
   BadRequestException, Body, Controller, ForbiddenException, Get, Headers, HttpCode, Injectable, Logger, Module, NotFoundException, Param,
-  ParseUUIDPipe, Post, Put, Query, UnauthorizedException, UploadedFile, UseInterceptors,
-} from '@nestjs/common';
+  ParseUUIDPipe, Post, Put, Query, UnauthorizedException, UploadedFile, } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileUpload } from '../common/file-upload';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
@@ -630,7 +629,7 @@ export class IntegrationsController {
 
   @Post('integrations/leads/import-csv')
   @RequireAny('integrations.manage', 'leads.import')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @FileUpload(10 * 1024 * 1024)
   importCsv(@CurrentUser() u: AuthUser, @UploadedFile() file: Express.Multer.File) { return this.sync.importCsv(u, file); }
 
   @Get('integrations/sync-runs')
@@ -725,5 +724,5 @@ export class LeadWebhookController {
   }
 }
 
-@Module({ imports: [LeadsModule], providers: [LeadSyncService], controllers: [IntegrationsController, LeadWebhookController] })
+@Module({ imports: [LeadsModule], providers: [LeadSyncService], exports: [LeadSyncService], controllers: [IntegrationsController, LeadWebhookController] })
 export class IntegrationsModule {}

@@ -23,11 +23,13 @@ export function qs(q?: Query) {
   return s ? `?${s}` : '';
 }
 
-/** Sent on every request. The skip header stops ngrok's free-plan warning page from replacing API replies. */
 const baseHeaders = async (): Promise<Record<string, string>> => {
   const token = await getToken();
-  return { 'ngrok-skip-browser-warning': '1', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+  return token ? { Authorization: `Bearer ${token}` } : {};
 };
+
+/** Hosted API requests are limited to about 4.5 MB, so larger files go straight to storage. */
+const DIRECT_UPLOAD_BYTES = 3 * 1024 * 1024;
 
 async function request<T>(method: string, path: string, body?: unknown, query?: Query): Promise<T> {
   const isForm = body instanceof FormData;
@@ -55,7 +57,15 @@ export const api = {
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body ?? {}),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body ?? {}),
   del: <T>(path: string) => request<T>('DELETE', path),
-  upload: <T>(path: string, file: File, field = 'file') => {
+  upload: async <T>(path: string, file: File, field = 'file') => {
+    if (file.size > DIRECT_UPLOAD_BYTES) {
+      const slot = await request<{ url: string | null; key?: string }>('POST', '/uploads/sign', {});
+      if (slot.url) {
+        const put = await fetch(slot.url, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });
+        if (!put.ok) throw new ApiError(put.status, 'The file could not be uploaded');
+        return request<T>('POST', path, {}, { staged: slot.key, name: file.name, type: file.type });
+      }
+    }
     const fd = new FormData();
     fd.append(field, file);
     return request<T>('POST', path, fd);
@@ -67,7 +77,11 @@ export const api = {
       const t = await res.text();
       throw new ApiError(res.status, (() => { try { return JSON.parse(t).message; } catch { return res.statusText; } })());
     }
-    return URL.createObjectURL(await res.blob());
+    // Hosted files come from a short-lived storage link rather than the API reply.
+    const location = res.headers.get('x-file-location');
+    const file = location ? await fetch(location) : res;
+    if (!file.ok) throw new ApiError(file.status, 'The file could not be opened');
+    return URL.createObjectURL(await file.blob());
   },
   download: async (path: string, query?: Query, fallbackName = 'download') => {
     const res = await fetch(BASE + path + qs(query), { headers: await baseHeaders() });

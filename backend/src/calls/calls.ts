@@ -1,8 +1,7 @@
 import {
   BadRequestException, Body, Controller, ForbiddenException, Get, Headers, HttpCode, Inject, Injectable, Logger, Module,
-  NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query, Res, UnauthorizedException, UploadedFile, UseInterceptors,
-} from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+  NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query, Res, UnauthorizedException, UploadedFile, } from '@nestjs/common';
+import { FileUpload } from '../common/file-upload';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator';
@@ -214,7 +213,7 @@ export class CallsService {
     const terminal: CallStatus[] = ['COMPLETED', 'NO_ANSWER', 'BUSY', 'FAILED', 'CANCELED'];
     const keepStatus = terminal.includes(call.status) && !terminal.includes(e.status);
     let recordingKey: string | undefined;
-    if (e.recordingBuffer) recordingKey = await this.storage.save('recording', e.recordingBuffer, 'call.wav');
+    if (e.recordingBuffer) recordingKey = await this.storage.save('recording', e.recordingBuffer, 'call.wav', 'audio/wav');
     await this.prisma.callLog.update({
       where: { id: call.id },
       data: {
@@ -230,7 +229,7 @@ export class CallsService {
     if (terminal.includes(e.status)) {
       await this.prisma.$transaction((tx) => this.leads.advance(tx, call.leadId, 'CONTACT_ATTEMPTED', call.userId, 'Call attempted'));
     }
-    if (e.recordingUrl && !recordingKey) void this.archiveRecording(call.id, e.recordingUrl);
+    if (e.recordingUrl && !recordingKey) await this.archiveRecording(call.id, e.recordingUrl);
     await this.prisma.webhookEvent.update({ where: { provider_eventId: { provider, eventId: e.eventId } }, data: { processedAt: new Date() } });
   }
 
@@ -239,7 +238,7 @@ export class CallsService {
     try {
       const { buffer, contentType } = await this.provider.fetchRecording(url);
       const ext = contentType.includes('wav') ? '.wav' : '.mp3';
-      const key = await this.storage.save('recording', buffer, `call${ext}`);
+      const key = await this.storage.save('recording', buffer, `call${ext}`, contentType);
       await this.prisma.callLog.update({ where: { id: callId }, data: { recordingKey: key } });
     } catch (e) {
       this.log.warn(`Recording archive failed for call ${callId}: ${(e as Error).message}`);
@@ -262,7 +261,7 @@ export class CallsService {
     const call = await this.prisma.callLog.findUnique({ where: { id } });
     if (!call) throw new NotFoundException('Call not found');
     if (call.userId !== user.id) await this.leads.getLeadForEdit(user, call.leadId);
-    const key = await this.storage.save('recording', file.buffer, file.originalname);
+    const key = await this.storage.save('recording', file.buffer, file.originalname, file.mimetype);
     if (call.recordingKey) await this.storage.remove(call.recordingKey);
     await this.prisma.callLog.update({ where: { id }, data: { recordingKey: key } });
     await this.audit.record({ actorId: user.id, action: 'call.recording_uploaded', entityType: 'call', entityId: id });
@@ -331,7 +330,7 @@ export class CallsController {
   }
 
   @Post('calls/:id/recording')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }))
+  @FileUpload()
   upload(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @UploadedFile() file: Express.Multer.File) {
     return this.calls.uploadRecording(user, id, file);
   }

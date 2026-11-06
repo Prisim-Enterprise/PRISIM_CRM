@@ -1,8 +1,7 @@
 import {
   BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Headers, Injectable, Module, NotFoundException,
-  Param, ParseUUIDPipe, Patch, Post, Query, Res, UploadedFile, UseInterceptors,
-} from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+  Param, ParseUUIDPipe, Patch, Post, Query, Res, UploadedFile, } from '@nestjs/common';
+import { FileUpload } from '../common/file-upload';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { IsBoolean, IsEnum, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateIf } from 'class-validator';
 import { FeedbackKind, FeedbackStatus, Prisma, TaskPriority } from '@prisma/client';
@@ -243,7 +242,7 @@ export class FeedbackService {
     if (!f) throw new NotFoundException('Not found');
     if (!this.isOwner(user, f) && !user.permissions.has('feedback.manage')) throw new NotFoundException('Not found');
     this.storage.validate('attachment', file);
-    const key = await this.storage.save('attachment', file.buffer, file.originalname);
+    const key = await this.storage.save('attachment', file.buffer, file.originalname, file.mimetype);
     // Anonymous: generic file name, no uploader, so the file record can't identify the author.
     const anonymousUpload = f.isAnonymous && this.isOwner(user, f);
     const ext = file.originalname.includes('.') ? file.originalname.slice(file.originalname.lastIndexOf('.')) : '';
@@ -276,7 +275,7 @@ export class FeedbackController {
   @Post('feedback/:id/responses') respond(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ResponseDto) { return this.svc.respond(u, id, dto); }
 
   @Post('feedback/:id/attachments')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }))
+  @FileUpload()
   attach(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @UploadedFile() file: Express.Multer.File) {
     return this.svc.attach(u, id, file);
   }

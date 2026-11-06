@@ -16,9 +16,8 @@
     "dev": "concurrently -n db,api,web -c gray,blue,green \"npm run db:start\" \"npm run dev:api\" \"npm run dev:web\"",
     "build": "npm run build -w backend && npm run build -w frontend",
     "test": "npm run test -w backend",
-    "serve:api": "npm run build -w backend && npm run start -w backend",
-    "serve:tunnel": "node scripts/tunnel.mjs",
-    "serve": "concurrently -n db,api,tunnel -c gray,blue,green \"npm run db:start\" \"npm run serve:api\" \"npm run serve:tunnel\""
+    "build:vercel": "npm run generate -w backend && npm run build",
+    "supabase:setup": "npm run supabase:setup -w backend"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

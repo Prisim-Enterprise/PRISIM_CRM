@@ -1,9 +1,8 @@
 import {
   BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Injectable, Logger, Module, NotFoundException,
-  Param, ParseUUIDPipe, Patch, Post, Query, UploadedFile, UseInterceptors,
-} from '@nestjs/common';
+  Param, ParseUUIDPipe, Patch, Post, Query, UploadedFile, } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileUpload } from '../common/file-upload';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
@@ -364,7 +363,7 @@ export class TasksService {
     const { canWork } = await this.load(user, id);
     if (!canWork) throw new ForbiddenException();
     this.storage.validate('attachment', file);
-    const key = await this.storage.save('attachment', file.buffer, file.originalname);
+    const key = await this.storage.save('attachment', file.buffer, file.originalname, file.mimetype);
     const a = await this.prisma.attachment.create({
       data: { storageKey: key, fileName: file.originalname.slice(0, 200), mimeType: file.mimetype, sizeBytes: file.size, uploadedById: user.id, taskId: id },
     });
@@ -424,11 +423,11 @@ export class TasksController {
   @Delete(':id/checklist/:itemId') delItem(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Param('itemId', ParseUUIDPipe) itemId: string) { return this.tasks.removeChecklist(u, id, itemId); }
 
   @Post(':id/attachments')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }))
+  @FileUpload()
   attach(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @UploadedFile() file: Express.Multer.File) {
     return this.tasks.attach(u, id, file);
   }
 }
 
-@Module({ providers: [TasksService, TaskReminders], controllers: [TasksController], exports: [TasksService] })
+@Module({ providers: [TasksService, TaskReminders], controllers: [TasksController], exports: [TasksService, TaskReminders] })
 export class TasksModule {}

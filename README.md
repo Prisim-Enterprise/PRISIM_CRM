@@ -82,13 +82,14 @@ apps/auth     retired FastAPI sign-in service, replaced by Clerk
 backend       NestJS API (src/<module>), Prisma schema + migrations + seed
 frontend      React app (src/pages, src/components)
 infrastructure Dockerfiles + Caddyfile for production
+api           Vercel entry point for the backend
 scripts       local database runner, backup script
 docs          deployment guide, decisions
 ```
 
 ## Deploying
 
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) (Oracle Cloud Always Free).
+See [docs/VERCEL_DEPLOY.md](docs/VERCEL_DEPLOY.md) (Vercel and Supabase). [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) covers running on your own server instead.
 
 ## Database
 

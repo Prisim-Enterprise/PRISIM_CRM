@@ -1,8 +1,7 @@
 import {
   BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Injectable, Module, NotFoundException,
-  Param, ParseUUIDPipe, Patch, Post, Query, UploadedFile, UseInterceptors,
-} from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+  Param, ParseUUIDPipe, Patch, Post, Query, UploadedFile, } from '@nestjs/common';
+import { FileUpload } from '../common/file-upload';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
@@ -363,7 +362,7 @@ export class ClientsService {
     const { work, isAssignee, canManage } = await this.loadWork(user, id);
     if (!isAssignee && !canManage) throw new ForbiddenException();
     this.storage.validate('attachment', file);
-    const key = await this.storage.save('attachment', file.buffer, file.originalname);
+    const key = await this.storage.save('attachment', file.buffer, file.originalname, file.mimetype);
     const a = await this.prisma.attachment.create({
       data: { storageKey: key, fileName: file.originalname.slice(0, 200), mimeType: file.mimetype, sizeBytes: file.size, uploadedById: user.id, clientWorkId: id },
     });
@@ -425,7 +424,7 @@ export class ClientsController {
   @Post('client-work/:id/updates') postUpdate(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: WorkUpdateDto) { return this.svc.postUpdate(u, id, dto); }
 
   @Post('client-work/:id/attachments')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } }))
+  @FileUpload()
   attach(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @UploadedFile() file: Express.Multer.File) {
     return this.svc.attach(u, id, file);
   }
