@@ -18,20 +18,21 @@ async function boot(): Promise<Handler> {
 let ready: Promise<Handler> | undefined;
 
 /**
- * A rewrite with a named parameter adds it to the query, which the API's strict validation
- * refuses. vercel.json avoids that; this keeps a future rewrite from taking down every list.
+ * Vercel parses its own req.query, which can hold values added by a rewrite (such as ?path=) that
+ * the API's strict validation refuses. Removing it makes Express read the query from the real URL.
  */
 function dropRewriteParam(req: IncomingMessage) {
+  delete (req as IncomingMessage & { query?: unknown }).query;
   const url = new URL(req.url ?? '/', 'http://localhost');
   if (!url.searchParams.has('path')) return;
   url.searchParams.delete('path');
   req.url = url.pathname + url.search;
-  delete (req as IncomingMessage & { query?: unknown }).query; // Vercel's copy, parsed from the old URL.
 }
 
 /** Vercel entry point (see /api/index.js). */
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   dropRewriteParam(req);
+  res.setHeader('X-CRM-Commit', process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? 'local');
   ready ??= boot().catch((e) => { ready = undefined; throw e; });
   (await ready)(req, res);
 }
