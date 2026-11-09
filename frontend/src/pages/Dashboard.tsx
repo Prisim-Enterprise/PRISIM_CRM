@@ -11,7 +11,7 @@ import { useAuth } from '../lib/auth';
 import { useDirectory, useTeams } from '../lib/hooks';
 import { CALL_OUTCOMES, LEAD_STATUS, ago, fmtDateTime, fmtDuration, fmtPhone, pct } from '../lib/format';
 import { Briefcase, CalendarClock, Globe, KanbanSquare, MessageSquareText, PhoneCall, StickyNote, Users } from 'lucide-react';
-import { Avatar, Badge, Card, Input, PageHeader, Select, Spinner, StatCard, Table, Td, Th } from '../components/ui';
+import { Avatar, Badge, Card, ErrorBox, Input, PageHeader, Select, Spinner, StatCard, Table, Td, Th } from '../components/ui';
 
 interface Dash {
   range: { from: string; to: string };
@@ -96,7 +96,7 @@ export default function Dashboard() {
   const isManager = can('reports.view.all', 'reports.view.team');
   const filters = { from, to, userId, teamId, campaign, source };
 
-  const { data, isLoading } = useQuery({ queryKey: ['dashboard', filters], queryFn: () => api.get<Dash>('/reports/dashboard', filters) });
+  const { data, isLoading, error } = useQuery({ queryKey: ['dashboard', filters], queryFn: () => api.get<Dash>('/reports/dashboard', filters) });
   const emps = useQuery({ queryKey: ['emp-report', filters], queryFn: () => api.get<EmpRow[]>('/reports/employees', filters), enabled: isManager });
   const opts = useQuery({ queryKey: ['lead-filters'], queryFn: () => api.get<{ campaigns: string[]; sources: { key: string; name: string }[] }>('/leads/filters') });
   const websiteLeads = useQuery({
@@ -144,7 +144,7 @@ export default function Dashboard() {
           </div>
         }
       />
-      {isLoading || !m ? <Spinner /> : (
+      {error ? <ErrorBox error={error} /> : isLoading || !m ? <Spinner /> : (
         <div className="space-y-5">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
             <StatCard label="Leads in period" value={m.leadsTotal} sub={`${m.newToday} new today`} onClick={() => nav('/leads')} />
