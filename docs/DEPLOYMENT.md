@@ -40,8 +40,10 @@ Set at least these in `.env`:
 NODE_ENV=production
 DOMAIN=crm.yourcompany.in
 POSTGRES_PASSWORD=<long random>
-VITE_CLERK_PUBLISHABLE_KEY=<from Clerk>
-CLERK_SECRET_KEY=<from Clerk>
+SUPABASE_URL=<from Supabase>
+SUPABASE_SECRET_KEY=<from Supabase>
+VITE_SUPABASE_URL=<from Supabase>
+VITE_SUPABASE_PUBLISHABLE_KEY=<from Supabase>
 FEEDBACK_HASH_SECRET=<random>             # never change it after go-live
 WEB_ORIGIN=https://crm.yourcompany.in
 PUBLIC_API_URL=https://crm.yourcompany.in

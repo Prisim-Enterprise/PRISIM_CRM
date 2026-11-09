@@ -16,14 +16,22 @@ Supabase pg_cron ──every minute──► /api/v1/internal/tick
 | `DATABASE_URL` | Transaction pooler string, port **6543**, ending `?sslmode=require&pgbouncer=true&connection_limit=3` |
 | `SUPABASE_URL` | `https://<project-ref>.supabase.co` |
 | `SUPABASE_SECRET_KEY` | Supabase secret key (`sb_secret_...`) |
-| `CLERK_SECRET_KEY` | Clerk production secret key (`sk_live_...`) |
-| `VITE_CLERK_PUBLISHABLE_KEY` | Clerk production publishable key (`pk_live_...`) |
+| `VITE_SUPABASE_URL` | Same as `SUPABASE_URL`. Use the **Config** type |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Supabase publishable key (`sb_publishable_...`). Use the **Config** type |
 | `WEB_ORIGIN` | `https://crm.prisim.co.in` |
 | `PUBLIC_API_URL` | `https://crm.prisim.co.in` |
 | `CRON_SECRET` | Long random value, the same as in local `.env` |
 | `FEEDBACK_HASH_SECRET` | Same value as local `.env`, so anonymous feedback stays anonymous and consistent |
 | `APP_TIMEZONE` | `Asia/Kolkata` |
 | `DEFAULT_COUNTRY` | `IN` |
+
+## Supabase Auth settings
+
+- **Authentication → URL Configuration:** set **Site URL** to the live address and add `<live address>/**` under **Redirect URLs**.
+- **Authentication → Sign In / Providers:** turn off **Allow new users to sign up**. People are added by an admin.
+- **Authentication → Emails → SMTP:** add your own mail server. Supabase's built-in email only reaches your Supabase team's addresses, at a very low hourly limit. Until then, set passwords with Reset password on the Users page.
+
+The first Super Admin is created under **Authentication → Users → Add user**, with **Auto Confirm User** on, using the email in `SEED_ADMIN_EMAIL`.
 
 ## After the first deploy
 

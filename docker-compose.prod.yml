@@ -1,4 +1,4 @@
-# Production stack: PostgreSQL + API (NestJS) + web (Caddy with automatic HTTPS). Sign-in is handled by Clerk.
+# Production stack: PostgreSQL + API (NestJS) + web (Caddy with automatic HTTPS). Sign-in is handled by Supabase Auth.
 # Usage on the server:  docker compose -f docker-compose.prod.yml up -d --build
 services:
   db:
@@ -34,7 +34,8 @@ services:
       context: .
       dockerfile: infrastructure/docker/web.Dockerfile
       args:
-        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:?set VITE_CLERK_PUBLISHABLE_KEY in .env}
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:?set VITE_SUPABASE_URL in .env}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:?set VITE_SUPABASE_PUBLISHABLE_KEY in .env}
     restart: unless-stopped
     environment:
       DOMAIN: ${DOMAIN:-localhost}

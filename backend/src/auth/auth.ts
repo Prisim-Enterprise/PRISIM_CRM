@@ -11,10 +11,10 @@ class UpdateMeDto {
   @IsOptional() @IsString() @MaxLength(64) timezone?: string;
 }
 
-/** Clerk doesn't tell the CRM when a session starts, so a sign-in is recorded at most this often. */
+/** The CRM isn't told when a session starts, so a sign-in is recorded at most this often. */
 const LOGIN_GAP_MS = 60 * 60_000;
 
-/** The signed-in person's own profile. Sign-in and passwords themselves are handled by Clerk. */
+/** The signed-in person's own profile. Sign-in and passwords themselves are handled by Supabase Auth. */
 @ApiTags('Auth')
 @ApiBearerAuth()
 @Controller('auth')

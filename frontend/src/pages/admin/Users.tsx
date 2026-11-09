@@ -31,7 +31,7 @@ function UserModal({ user, onClose }: { user: UserRow | 'new'; onClose: () => vo
       ? api.post<{ inviteSent?: boolean }>('/users', { ...f, phone: f.phone || undefined, teamId: f.teamId || undefined })
       : api.patch(`/users/${user.id}`, { fullName: f.fullName, email: f.email, phone: f.phone || null, teamId: f.teamId || null, roleKeys: f.roleKeys }),
     onSuccess: (r) => {
-      if (isNew && !(r as { inviteSent?: boolean }).inviteSent) toast.warning('User created, but the invitation email failed. Use the mail button to resend it.');
+      if (isNew && !(r as { inviteSent?: boolean }).inviteSent) toast.warning('User created, but the invitation email could not be sent. Use the key button to set their password, then give it to them privately.');
       else toast.success(isNew ? 'User created. Invitation sent by email.' : 'User updated');
       qc.invalidateQueries({ queryKey: ['users'] }); qc.invalidateQueries({ queryKey: ['directory'] }); onClose();
     },
@@ -75,8 +75,8 @@ function ResetPasswordModal({ user, onClose }: { user: UserRow; onClose: () => v
   return (
     <Modal open onClose={onClose} title={`Reset password for ${user.fullName}`}
       footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={m.isPending} disabled={!password || password !== confirm} onClick={() => m.mutate()}>Reset password</Button></>}>
-      <p className="text-sm text-slate-600">They'll be signed out on all devices and must use this password next time. Give it to them privately.</p>
-      <Field label="New password" hint="Must meet your Clerk password rules (currently 15 characters or more)."><Input type="text" autoComplete="off" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+      <p className="text-sm text-slate-600">They must use this password next time they sign in. This also works if they have never signed in. Give it to them privately.</p>
+      <Field label="New password" hint="At least 8 characters."><Input type="text" autoComplete="off" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
       <Field label="Confirm new password"><Input type="text" autoComplete="off" value={confirm} onChange={(e) => setConfirm(e.target.value)} /></Field>
       {confirm && confirm !== password && <p className="text-sm text-rose-600">Passwords don't match</p>}
       <ErrorBox error={m.error} />
@@ -127,7 +127,7 @@ export default function AdminUsers() {
     catch (e) { toast.error(errMsg(e)); }
   };
   const remove = async (u: UserRow) => {
-    const ok = confirm(`Delete ${u.fullName}?\n\nThey lose all access and their Clerk sign-in is removed. Their open leads go to Unassigned, open tasks lose their assignee and pending follow-ups are cancelled. Past calls and records keep their name.\n\nThis cannot be undone.`);
+    const ok = confirm(`Delete ${u.fullName}?\n\nThey lose all access and their sign-in is removed. Their open leads go to Unassigned, open tasks lose their assignee and pending follow-ups are cancelled. Past calls and records keep their name.\n\nThis cannot be undone.`);
     if (!ok) return;
     try {
       const r = await api.del<{ released: { leads: number; followUps: number; tasks: number } }>(`/users/${u.id}`);
@@ -136,7 +136,7 @@ export default function AdminUsers() {
     } catch (e) { toast.error(errMsg(e)); }
   };
   const invite = async (u: UserRow) => {
-    try { await api.post(`/users/${u.id}/invite`); toast.success(`Invitation sent to ${u.email}`); } catch (e) { toast.error(errMsg(e)); }
+    try { await api.post(`/users/${u.id}/invite`); toast.success(`Sign-in link sent to ${u.email}`); } catch (e) { toast.error(errMsg(e)); }
   };
 
   return (
@@ -163,7 +163,7 @@ export default function AdminUsers() {
                       {manage && <>
                       <Button size="sm" variant="ghost" onClick={() => setEditing(u)} title="Edit"><Pencil className="h-4 w-4" /></Button>
                       <Button size="sm" variant="ghost" onClick={() => setResetting(u)} title="Reset password"><KeyRound className="h-4 w-4" /></Button>
-                      <Button size="sm" variant="ghost" onClick={() => invite(u)} title="Send sign-in invitation"><Mail className="h-4 w-4" /></Button>
+                      <Button size="sm" variant="ghost" onClick={() => invite(u)} title="Email a sign-in link"><Mail className="h-4 w-4" /></Button>
                       {u.id !== me?.id && <Button size="sm" variant="ghost" onClick={() => toggleActive(u)}>{u.isActive ? 'Deactivate' : 'Activate'}</Button>}
                       {u.id !== me?.id && <Button size="sm" variant="ghost" onClick={() => remove(u)} title="Delete user"><Trash2 className="h-4 w-4 text-rose-600" /></Button>}
                       </>}

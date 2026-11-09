@@ -10,7 +10,7 @@ import { AuditService } from '../common/audit.service';
 import { AuthUser, CurrentUser, RequireAny } from '../common/current-user';
 import { PERMISSIONS } from '../common/permissions';
 import { normalizePhone } from '../common/phone';
-import { clerkIdByEmail, removeFromClerk, sendInvitation, setClerkPassword } from '../common/clerk';
+import { authIdByEmail, createSignIn, removeSignIn, sendInvitation, setPassword } from '../common/supabase-auth';
 import { CLOSED_STATUSES } from '../leads/lead-status';
 
 class CreateUserDto {
@@ -99,14 +99,14 @@ export class UsersService {
       await sendInvitation(email);
       return true;
     } catch (e) {
-      this.log.error(`Clerk invitation failed: ${(e as Error).message}`);
+      this.log.error(`Invitation email failed: ${(e as Error).message}`);
       return false;
     }
   }
 
   /** Loads a user an admin may act on. Only a Super Admin may act on a Super Admin. */
   private async target(id: string, actor: AuthUser) {
-    const target = await this.prisma.user.findFirst({ where: { id, deletedAt: null }, select: { ...userSelect, clerkUserId: true } });
+    const target = await this.prisma.user.findFirst({ where: { id, deletedAt: null }, select: { ...userSelect, authUserId: true } });
     if (!target) throw new NotFoundException('User not found');
     if (target.roles.some((r) => r.role.key === 'super_admin') && !actor.permissions.has('roles.manage')) {
       throw new ForbiddenException('Only a Super Admin can do this to a Super Admin account');
@@ -116,9 +116,9 @@ export class UsersService {
 
   async resetPassword(id: string, password: string, actor: AuthUser) {
     const target = await this.target(id, actor);
-    const clerkId = target.clerkUserId ?? (await clerkIdByEmail(target.email));
-    if (!clerkId) throw new BadRequestException(`${target.fullName} has not created a sign-in yet. Send them the invitation instead.`);
-    const problem = await setClerkPassword(clerkId, password);
+    // Works before they have accepted an invitation, so nobody depends on email reaching them.
+    const authId = target.authUserId ?? (await authIdByEmail(target.email));
+    const problem = authId ? await setPassword(authId, password) : await createSignIn(target.email, password);
     if (problem) throw new BadRequestException(problem);
     await this.audit.record({ actorId: actor.id, action: 'user.password_reset', entityType: 'user', entityId: id });
     return { ok: true };
@@ -155,24 +155,24 @@ export class UsersService {
       await tx.user.update({
         where: { id },
         // Frees the email so the same person can be added again later.
-        data: { deletedAt: new Date(), isActive: false, email: `deleted-${id}@prisim.internal`, phone: null, teamId: null, clerkUserId: null },
+        data: { deletedAt: new Date(), isActive: false, email: `deleted-${id}@prisim.internal`, phone: null, teamId: null, authUserId: null },
       });
       return { leads: leads.length, followUps: followUps.count, tasks: tasks.count };
     });
-    let clerkRemoved = true;
+    let signInRemoved = true;
     try {
-      await removeFromClerk(target.clerkUserId, target.email);
+      await removeSignIn(target.authUserId, target.email);
     } catch (e) {
-      clerkRemoved = false; // The CRM already refuses this account, so this only leaves an unused Clerk login.
-      this.log.error(`Could not remove the Clerk account: ${(e as Error).message}`);
+      signInRemoved = false; // The CRM already refuses this account, so this only leaves an unused login.
+      this.log.error(`Could not remove the sign-in account: ${(e as Error).message}`);
     }
     await this.audit.record({ actorId: actor.id, action: 'user.deleted', entityType: 'user', entityId: id, before: { fullName: target.fullName, email: target.email }, after: released });
-    return { ok: true, released, clerkRemoved };
+    return { ok: true, released, signInRemoved };
   }
 
   async resendInvite(id: string, actor: AuthUser) {
     const target = await this.target(id, actor);
-    if (!(await this.invite(target.email))) throw new BadRequestException('Clerk could not send the invitation. They may already have an account: ask them to sign in.');
+    if (!(await this.invite(target.email))) throw new BadRequestException('The email could not be sent. Use Reset password to set their password instead.');
     await this.audit.record({ actorId: actor.id, action: 'user.invited', entityType: 'user', entityId: id });
     return { ok: true };
   }
@@ -188,8 +188,8 @@ export class UsersService {
     if (dto.fullName !== undefined) data.fullName = dto.fullName.trim();
     if (dto.email !== undefined) {
       data.email = dto.email.toLowerCase().trim();
-      // The old Clerk account must lose access; the new email links on its first sign-in.
-      if (data.email !== before.email) data.clerkUserId = null;
+      // The old sign-in must lose access; the new email links on its first sign-in.
+      if (data.email !== before.email) data.authUserId = null;
     }
     if (dto.timezone !== undefined) data.timezone = dto.timezone;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;

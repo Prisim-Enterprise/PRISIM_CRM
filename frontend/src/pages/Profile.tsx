@@ -1,15 +1,23 @@
 import { useState } from 'react';
-import { useClerk } from '@clerk/react';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { supabase } from '../lib/supabase';
 import { Badge, Button, Card, ErrorBox, Field, Input, PageHeader } from '../components/ui';
 
 export default function Profile() {
   const { me, refresh } = useAuth();
   const [phone, setPhone] = useState(me?.phone ?? '');
-  const clerk = useClerk();
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const changePassword = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) throw error;
+    },
+    onSuccess: () => { toast.success('Password changed'); setPassword(''); setConfirm(''); },
+  });
   const savePhone = useMutation({
     mutationFn: () => api.patch('/auth/me', { phone: phone || null }),
     onSuccess: () => { toast.success('Profile updated'); refresh(); },
@@ -34,10 +42,13 @@ export default function Profile() {
           <ErrorBox error={savePhone.error} />
         </div>
       </Card>
-      <Card title="Password and security">
-        <div className="space-y-3 p-5">
-          <p className="text-sm text-slate-600">Change your password, connected accounts and active devices.</p>
-          <Button variant="secondary" onClick={() => clerk.openUserProfile()}>Manage sign-in</Button>
+      <Card title="Change password">
+        <div className="space-y-4 p-5">
+          <Field label="New password" hint="At least 8 characters."><Input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+          <Field label="Confirm new password"><Input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} /></Field>
+          {confirm && confirm !== password && <p className="text-sm text-rose-600">Passwords don't match</p>}
+          <ErrorBox error={changePassword.error} />
+          <Button loading={changePassword.isPending} disabled={password.length < 8 || password !== confirm} onClick={() => changePassword.mutate()}>Change password</Button>
         </div>
       </Card>
     </div>

@@ -7,8 +7,8 @@ Built from the *Prisim CRM Business Workflow & Technical Architecture Blueprint 
 | Layer | Tech |
 |---|---|
 | Web | React 19 + TypeScript, Vite, Tailwind CSS, TanStack Query, Recharts |
-| Auth | **Clerk** for sign-in, passwords and sessions. Roles and permissions stay in the CRM. |
-| API | NestJS 11 (modular monolith), REST `/api/v1`, Swagger at `/api/docs`. It verifies Clerk session tokens. |
+| Auth | **Supabase Auth** for sign-in, passwords and sessions. Roles and permissions stay in the CRM. |
+| API | NestJS 11 (modular monolith), REST `/api/v1`, Swagger at `/api/docs`. It verifies Supabase access tokens. |
 | Database | PostgreSQL 17 + Prisma 6 |
 | Integrations | Google Sheets API (service account), Exotel click-to-call + recordings, built-in call simulator |
 
@@ -18,7 +18,7 @@ Requires Node.js 20+ and Python 3.11+. A local PostgreSQL is downloaded and run 
 
 ```bash
 npm install
-cp .env.example .env        # then set the Clerk keys and SEED_ADMIN_EMAIL (already done on this machine)
+cp .env.example .env        # then set the Supabase keys and SEED_ADMIN_EMAIL (already done on this machine)
 npm run db:start            # terminal 1: local PostgreSQL on port 5433
 npm run db:migrate          # first time only
 npm run db:seed -- --demo   # first time only: roles + admin + sample data
@@ -33,7 +33,7 @@ Or run everything together with `npm run dev` (database, API, web).
 
 ### First sign-in
 
-The seed creates the Super Admin from `SEED_ADMIN_EMAIL` and emails them a Clerk invitation. Everyone else is added on the Users page, which sends their invitation. A Clerk account alone gives no access: the email must match a user in the CRM.
+The seed creates the Super Admin from `SEED_ADMIN_EMAIL` and emails them an invitation. Everyone else is added on the Users page, which sends their invitation, or an admin sets their password with Reset password. A sign-in account alone gives no access: the email must match a user in the CRM.
 
 To remove all data (leads, calls, follow-ups, tasks, feedback, logs, all users except Super Admins, and teams) while keeping roles and permissions:
 
@@ -78,7 +78,7 @@ An end-to-end API check covering roles and permissions, assignment, calls, recor
 ## Project layout
 
 ```
-apps/auth     retired FastAPI sign-in service, replaced by Clerk
+apps/auth     retired FastAPI sign-in service, no longer used
 backend       NestJS API (src/<module>), Prisma schema + migrations + seed
 frontend      React app (src/pages, src/components)
 infrastructure Dockerfiles + Caddyfile for production
@@ -93,11 +93,11 @@ See [docs/VERCEL_DEPLOY.md](docs/VERCEL_DEPLOY.md) (Vercel and Supabase). [docs/
 
 ## Database
 
-PostgreSQL on **Supabase** (`DATABASE_URL`, Session pooler). The CRM connects directly with Prisma and does not use Supabase's Data API or Auth. Every table has row-level security on with no policies, so the publishable key can't read or write anything. A migration that adds a table must also enable it there. `npm run dev` still starts the local database, kept as a fallback at `LOCAL_DATABASE_URL`.
+PostgreSQL on **Supabase** (`DATABASE_URL`, Session pooler). The CRM connects directly with Prisma and does not use Supabase's Data API. Every table has row-level security on with no policies, so the publishable key can't read or write anything. A migration that adds a table must also enable it there. `npm run dev` still starts the local database, kept as a fallback at `LOCAL_DATABASE_URL`.
 
 ## How sign-in works
 
-1. The web app shows **Clerk**'s sign-in screen. Clerk handles passwords, Google sign-in, resets and sessions.
-2. Every API request carries a short-lived Clerk session token, which the **NestJS** API verifies, including that it was issued for this website.
-3. The first sign-in links the Clerk account to the CRM user with the same verified email. Without a matching CRM user, access is refused.
+1. The web app has its own sign-in page. **Supabase Auth** handles passwords, resets and sessions.
+2. Every API request carries a short-lived access token, which the **NestJS** API verifies.
+3. The first sign-in links the Supabase account to the CRM user with the same verified email. Without a matching CRM user, access is refused.
 4. The API reloads the user's roles and permissions on every request, so deactivating someone or changing their role takes effect immediately.

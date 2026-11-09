@@ -7,8 +7,10 @@ COPY frontend/package.json frontend/
 RUN npm ci --workspace frontend --include-workspace-root=false
 COPY frontend frontend
 # Public by design; Vite builds it into the web app.
-ARG VITE_CLERK_PUBLISHABLE_KEY
-ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_PUBLISHABLE_KEY
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
+ENV VITE_SUPABASE_PUBLISHABLE_KEY=$VITE_SUPABASE_PUBLISHABLE_KEY
 RUN npm run build -w frontend
 
 FROM caddy:2-alpine

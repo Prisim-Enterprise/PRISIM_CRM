@@ -1,7 +1,9 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
-import { useAuth as useClerkAuth, useClerk } from '@clerk/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, errMsg, setTokenGetter } from './api';
+import { supabase } from './supabase';
+
+setTokenGetter(async () => (await supabase.auth.getSession()).data.session?.access_token ?? null);
 
 export interface Me {
   id: string;
@@ -19,7 +21,9 @@ export interface Me {
 interface AuthCtx {
   me: Me | null;
   loading: boolean;
-  /** Signed in with Clerk, but the CRM refused: not added, or deactivated. */
+  /** Has a sign-in session. True even if the CRM refused them. */
+  signedIn: boolean;
+  /** Signed in, but the CRM refused: not added, or deactivated. */
   denied: string | null;
   logout: () => void;
   refresh: () => Promise<void>;
@@ -29,18 +33,25 @@ interface AuthCtx {
 const Ctx = createContext<AuthCtx>(null as unknown as AuthCtx);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const { isLoaded, isSignedIn, getToken } = useClerkAuth();
-  const clerk = useClerk();
+  const [ready, setReady] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
   const [me, setMe] = useState<Me | null>(null);
   const [denied, setDenied] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const qc = useQueryClient();
 
-  useEffect(() => { setTokenGetter(() => getToken()); }, [getToken]);
+  // Also fires on token refreshes, which is why the user id is kept rather than the session.
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserId(session?.user.id ?? null);
+      setReady(true);
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
 
   const refresh = useCallback(async () => {
-    if (!isLoaded) return;
-    if (!isSignedIn) {
+    if (!ready) return;
+    if (!userId) {
       setMe(null); setDenied(null); setLoading(false);
       return;
     }
@@ -53,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [isLoaded, isSignedIn]);
+  }, [ready, userId]);
 
   useEffect(() => {
     setLoading(true);
@@ -63,14 +74,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const logout = () => {
-    // State clears when Clerk reports the sign-out, so the session is really gone before /login shows.
+    // State clears when Supabase reports the sign-out, so the session is really gone before /login shows.
     qc.clear();
-    void clerk.signOut({ redirectUrl: '/login' });
+    void supabase.auth.signOut();
   };
 
   const can = (...perms: string[]) => !!me && perms.some((p) => me.permissions.includes(p));
 
-  return <Ctx.Provider value={{ me, loading, denied, logout, refresh, can }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ me, loading, signedIn: !!userId, denied, logout, refresh, can }}>{children}</Ctx.Provider>;
 }
 
 export const useAuth = () => useContext(Ctx);

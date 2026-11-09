@@ -1,6 +1,6 @@
 const BASE = '/api/v1';
 
-/** Clerk session tokens are short-lived, so each request asks Clerk for a current one. */
+/** Access tokens are short-lived, so each request asks for a current one. */
 let getToken: () => Promise<string | null> = async () => null;
 export const setTokenGetter = (fn: () => Promise<string | null>) => { getToken = fn; };
 
@@ -30,6 +30,7 @@ const baseHeaders = async (): Promise<Record<string, string>> => {
 
 /** Hosted API requests are limited to about 4.5 MB, so larger files go straight to storage. */
 const DIRECT_UPLOAD_BYTES = 3 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 async function request<T>(method: string, path: string, body?: unknown, query?: Query): Promise<T> {
   const isForm = body instanceof FormData;
@@ -58,6 +59,7 @@ export const api = {
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body ?? {}),
   del: <T>(path: string) => request<T>('DELETE', path),
   upload: async <T>(path: string, file: File, field = 'file') => {
+    if (file.size > MAX_UPLOAD_BYTES) throw new ApiError(400, 'File is larger than 25 MB');
     if (file.size > DIRECT_UPLOAD_BYTES) {
       const slot = await request<{ url: string | null; key?: string }>('POST', '/uploads/sign', {});
       if (slot.url) {

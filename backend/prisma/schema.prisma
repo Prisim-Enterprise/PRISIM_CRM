@@ -18,9 +18,9 @@ model User {
   fullName     String
   email        String   @unique
   phone        String? // agent phone in E.164, used for click-to-call
-  // Sign-in is handled by Clerk. Filled in the first time this person signs in.
-  clerkUserId  String?  @unique
-  passwordHash String? // legacy, unused since the move to Clerk
+  // Sign-in is handled by Supabase Auth. Filled in the first time this person signs in.
+  authUserId   String?  @unique
+  passwordHash String? // legacy, unused
   isActive     Boolean  @default(true)
   timezone     String   @default("Asia/Kolkata")
   teamId       String?  @db.Uuid

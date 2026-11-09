@@ -2,7 +2,7 @@
 // Seeds permissions, built-in roles and the first Super Admin.
 // Run with --demo to also create sample teams, users, leads, calls, tasks and feedback.
 import { PrismaClient, LeadStatus, TaskPriority, TaskStatus } from '@prisma/client';
-import { createClerkClient } from '@clerk/backend';
+import { createClient } from '@supabase/supabase-js';
 import { DEFAULT_ROLES, PERMISSIONS } from '../src/common/permissions';
 
 const prisma = new PrismaClient();
@@ -62,12 +62,12 @@ async function seedAdmin() {
   }
   await createUser(email, 'Super Admin', 'super_admin');
   console.log(`✓ Super Admin created → ${email}`);
-  if (process.env.CLERK_SECRET_KEY) {
-    const origin = (process.env.WEB_ORIGIN || 'http://localhost:5173').split(',')[0].trim();
-    await createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY }).invitations
-      .createInvitation({ emailAddress: email, redirectUrl: `${origin}/sign-up`, ignoreExisting: true, notify: true })
-      .then(() => console.log(`✓ Clerk invitation emailed to ${email}`))
-      .catch((e) => console.warn(`! Could not send the Clerk invitation: ${(e as Error).message}`));
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SECRET_KEY) {
+    const origin = (process.env.WEB_ORIGIN || 'http://localhost:5173').split(',')[0].trim().replace(/\/$/, '');
+    const { error } = await createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } })
+      .auth.admin.inviteUserByEmail(email, { redirectTo: `${origin}/set-password` });
+    if (error) console.warn(`! Could not send the invitation: ${error.message}. Add this person under Authentication → Users in Supabase instead.`);
+    else console.log(`✓ Invitation emailed to ${email}`);
   }
 }
 
