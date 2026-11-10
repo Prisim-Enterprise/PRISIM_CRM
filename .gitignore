@@ -12,3 +12,7 @@ frontend/dist/
 apps/auth/.venv/
 __pycache__/
 .pytest_cache/
+
+.vercel/
+.env.local
+.env.*.local

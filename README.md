@@ -31,9 +31,13 @@ Or run everything together with `npm run dev` (database, API, web).
 > npm 11 blocks package install scripts by default. If `prisma generate` complains, run
 > `npm approve-scripts @prisma/engines esbuild` once, then `npm rebuild`.
 
+### Supabase backend migration
+
+The target is Supabase Auth, Postgres, Storage, and Edge Functions. The `crm` Edge Function currently implements only the signed-in profile endpoints (`GET` and `PATCH /auth/me`); all other CRM API routes still use NestJS. Keep `VITE_SUPABASE_EDGE_AUTH=false` until the function is deployed and verified. Production remains on the existing deployment until all CRM features have been migrated and tested.
+
 ### First sign-in
 
-The seed creates the Super Admin from `SEED_ADMIN_EMAIL` and emails them an invitation. Everyone else is added on the Users page, which sends their invitation, or an admin sets their password with Reset password. A sign-in account alone gives no access: the email must match a user in the CRM.
+The first confirmed Supabase Auth user whose email exactly matches `SEED_ADMIN_EMAIL` is provisioned as the initial Super Admin on first sign-in. After that it is an ordinary account: it gets Super Admin back automatically only if no active Super Admin is left (recovery). The CRM also refuses to deactivate, demote or delete the last active Super Admin. Set this variable only to the intended administrator in the hosting environment. Everyone else is added on the Users page, which sends their invitation, or an admin sets their password with Reset password. A sign-in account alone gives no access: the email must match a user in the CRM.
 
 To remove all data (leads, calls, follow-ups, tasks, feedback, logs, all users except Super Admins, and teams) while keeping roles and permissions:
 
@@ -61,7 +65,7 @@ Uploaded files and recordings are stored in `storage/`. Delete that folder's con
 
 **Activity feed.** The dashboard shows a live feed of who did what: lead status changes, assignments, notes, calls, follow-ups, task changes, feedback and client work updates. Admins see everyone, team leaders see their team and employees see their own. Anonymous feedback is never attributed.
 
-**Users & roles.** Super Admin, Admin/Manager, Team Leader and Employee are editable permission bundles (30 permissions), and custom roles can be added. The backend enforces every scope (all / team / own). Employees can **view all leads but only edit their own**, as decided.
+**Users & roles.** Super Admin, Admin/Manager, Team Leader and Employee are editable permission bundles (32 permissions), and custom roles can be added. The backend enforces every scope (all / team / own). Employees can **view all leads but only edit their own**, as decided.
 
 **Dashboard & reports (Module G).** Metrics, daily trends, lead status, campaign performance, call outcomes and per-employee performance, scoped by role, with date, campaign, team and employee filters. Metric definitions are documented in `backend/src/reports/reports.ts`.
 

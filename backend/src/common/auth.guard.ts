@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser, IS_PUBLIC, REQUIRED_PERMS } from './current-user';
 import { verifiedEmail, verifyAuthToken } from './supabase-auth';
+import { DEFAULT_ROLES, PERMISSIONS } from './permissions';
 
 /** The web app shows a "no access" screen for this message. */
 export const NO_ACCESS = 'This account has not been added to Prisim CRM. Ask your administrator.';
@@ -41,13 +42,82 @@ export class AuthGuard implements CanActivate {
    * A sign-in account alone gives no access: someone must have added this person to the CRM.
    */
   private async crmUserId(authUserId: string): Promise<string> {
-    const linked = await this.prisma.user.findUnique({ where: { authUserId }, select: { id: true } });
-    if (linked) return linked.id;
+    const seedAdminEmail = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase() || null;
+    const linked = await this.prisma.user.findUnique({ where: { authUserId }, select: { id: true, email: true } });
+    if (linked) {
+      // Recovery only: if no active Super Admin is left, the seed admin gets the role back.
+      if (linked.email === seedAdminEmail && !(await this.hasActiveSuperAdmin())) {
+        return this.bootstrapSuperAdmin(authUserId, linked.email);
+      }
+      return linked.id;
+    }
     const email = await verifiedEmail(authUserId);
     const user = email ? await this.prisma.user.findUnique({ where: { email }, select: { id: true, authUserId: true } }) : null;
+    // First install (or recovery): provision the seed admin only while there is no active Super Admin.
+    // Otherwise they are treated like anyone else, so a demotion or removal sticks.
+    if (email && email === seedAdminEmail && !(await this.hasActiveSuperAdmin())) {
+      return this.bootstrapSuperAdmin(authUserId, email);
+    }
     if (!user || (user.authUserId && user.authUserId !== authUserId)) throw new ForbiddenException(NO_ACCESS);
     await this.prisma.user.update({ where: { id: user.id }, data: { authUserId } });
     return user.id;
+  }
+
+  private async hasActiveSuperAdmin() {
+    const count = await this.prisma.user.count({
+      where: { isActive: true, deletedAt: null, roles: { some: { role: { key: 'super_admin' } } } },
+    });
+    return count > 0;
+  }
+
+  private async bootstrapSuperAdmin(authUserId: string, email: string): Promise<string> {
+    const roleDefaults = DEFAULT_ROLES.find((role) => role.key === 'super_admin');
+    if (!roleDefaults) throw new Error('Super Admin role defaults are missing');
+
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.user.findUnique({ where: { email }, select: { id: true, authUserId: true } });
+      if (existing?.authUserId && existing.authUserId !== authUserId) throw new ForbiddenException(NO_ACCESS);
+
+      for (const [key, [group, description]] of Object.entries(PERMISSIONS)) {
+        await tx.permission.upsert({
+          where: { key },
+          update: { group, description },
+          create: { key, group, description },
+        });
+      }
+      const permissions = await tx.permission.findMany({ where: { key: { in: roleDefaults.permissions } }, select: { id: true } });
+      const role = await tx.role.upsert({
+        where: { key: roleDefaults.key },
+        update: { name: roleDefaults.name, description: roleDefaults.description, isSystem: true },
+        create: { key: roleDefaults.key, name: roleDefaults.name, description: roleDefaults.description, isSystem: true },
+      });
+      await tx.rolePermission.createMany({
+        data: permissions.map((permission) => ({ roleId: role.id, permissionId: permission.id })),
+        skipDuplicates: true,
+      });
+
+      if (existing) {
+        // Recovery also reactivates the account, otherwise the restored role would be useless.
+        await tx.user.update({ where: { id: existing.id }, data: { authUserId, isActive: true } });
+        await tx.userRole.upsert({
+          where: { userId_roleId: { userId: existing.id, roleId: role.id } },
+          update: {},
+          create: { userId: existing.id, roleId: role.id },
+        });
+        return existing.id;
+      }
+
+      const created = await tx.user.create({
+        data: {
+          email,
+          fullName: process.env.SEED_ADMIN_NAME?.trim() || 'Super Admin',
+          authUserId,
+          roles: { create: { roleId: role.id } },
+        },
+        select: { id: true },
+      });
+      return created.id;
+    });
   }
 
   async loadUser(id: string): Promise<AuthUser> {

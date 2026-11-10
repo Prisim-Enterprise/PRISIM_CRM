@@ -3,7 +3,7 @@ import {
   NotFoundException, Param, ParseUUIDPipe, Patch, Post, Put, Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { ArrayUnique, IsArray, IsBoolean, IsEmail, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { ArrayUnique, IsArray, IsBoolean, IsEmail, IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateIf } from 'class-validator';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
@@ -41,8 +41,14 @@ class UserPermissionsDto {
 }
 
 class TeamDto {
-  @IsString() @MinLength(2) name: string;
-  @IsOptional() @IsUUID() leaderId?: string | null;
+  @IsString() @MinLength(2) @MaxLength(100) name: string;
+  @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() leaderId?: string | null;
+}
+
+class UpdateTeamDto {
+  @IsOptional() @IsString() @MinLength(2) @MaxLength(100) name?: string;
+  /** Leave out to keep the current leader; null removes the leader. */
+  @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() leaderId?: string | null;
 }
 
 class RoleDto {
@@ -61,19 +67,57 @@ const userSelect = {
   _count: { select: { permissionOverrides: true } },
 } satisfies Prisma.UserSelect;
 
+/** Also loads role permissions, to check the actor outranks the account they act on. */
+const targetSelect = {
+  ...userSelect,
+  roles: { select: { role: { select: { key: true, name: true, permissions: { select: { permission: { select: { key: true } } } } } } } },
+} satisfies Prisma.UserSelect;
+
 @Injectable()
 export class UsersService {
   private log = new Logger('Users');
   constructor(private prisma: PrismaService, private audit: AuditService) {}
 
   private async rolesFor(keys: string[], actor: AuthUser) {
-    const roles = await this.prisma.role.findMany({ where: { key: { in: keys } } });
+    const roles = await this.prisma.role.findMany({
+      where: { key: { in: keys } },
+      include: { permissions: { select: { permission: { select: { key: true } } } } },
+    });
     if (roles.length !== new Set(keys).size) throw new BadRequestException('Unknown role');
     // Only users who can manage roles may grant Super Admin.
     if (roles.some((r) => r.key === 'super_admin') && !actor.permissions.has('roles.manage')) {
       throw new ForbiddenException('Only a Super Admin can grant the Super Admin role');
     }
+    // Nobody can hand out a permission they don't have themselves, or they could escalate through a custom role.
+    const beyond = roles.filter((r) => r.permissions.some((p) => !actor.permissions.has(p.permission.key)));
+    if (beyond.length) {
+      throw new ForbiddenException(`You can't assign ${beyond.map((r) => r.name).join(', ')}: it includes permissions you don't have`);
+    }
     return roles;
+  }
+
+  /** A person may only act on accounts whose roles carry no permission they lack themselves. */
+  private assertOutranks(target: { roles: { role: { key: string; permissions?: { permission: { key: string } }[] } }[] }, actor: AuthUser, what: string) {
+    if (target.roles.some((r) => r.role.key === 'super_admin') && !actor.permissions.has('roles.manage')) {
+      throw new ForbiddenException(`Only a Super Admin can ${what} a Super Admin account`);
+    }
+    if (target.roles.some((r) => r.role.permissions?.some((p) => !actor.permissions.has(p.permission.key)))) {
+      throw new ForbiddenException(`You can't ${what} this account: their role has permissions you don't have`);
+    }
+  }
+
+  /** Blocks any change that would leave the CRM without an active Super Admin. */
+  private async assertNotLastSuperAdmin(id: string) {
+    const others = await this.prisma.user.count({
+      where: { id: { not: id }, isActive: true, deletedAt: null, roles: { some: { role: { key: 'super_admin' } } } },
+    });
+    if (!others) throw new BadRequestException('This is the last active Super Admin. Make someone else a Super Admin first.');
+  }
+
+  private async assertTeamExists(teamId: string | null | undefined) {
+    if (teamId && !(await this.prisma.team.findUnique({ where: { id: teamId }, select: { id: true } }))) {
+      throw new BadRequestException('Team not found');
+    }
   }
 
   async create(dto: CreateUserDto, actor: AuthUser) {
@@ -82,6 +126,7 @@ export class UsersService {
     const roles = await this.rolesFor(dto.roleKeys, actor);
     const phone = dto.phone ? normalizePhone(dto.phone) : null;
     if (dto.phone && !phone) throw new BadRequestException('Phone number is not valid');
+    await this.assertTeamExists(dto.teamId);
     const user = await this.prisma.user.create({
       data: {
         fullName: dto.fullName.trim(), email, phone, teamId: dto.teamId ?? null,
@@ -105,12 +150,10 @@ export class UsersService {
   }
 
   /** Loads a user an admin may act on. Only a Super Admin may act on a Super Admin. */
-  private async target(id: string, actor: AuthUser) {
-    const target = await this.prisma.user.findFirst({ where: { id, deletedAt: null }, select: { ...userSelect, authUserId: true } });
+  private async target(id: string, actor: AuthUser, what = 'change') {
+    const target = await this.prisma.user.findFirst({ where: { id, deletedAt: null }, select: { ...targetSelect, authUserId: true } });
     if (!target) throw new NotFoundException('User not found');
-    if (target.roles.some((r) => r.role.key === 'super_admin') && !actor.permissions.has('roles.manage')) {
-      throw new ForbiddenException('Only a Super Admin can do this to a Super Admin account');
-    }
+    this.assertOutranks(target, actor, what);
     return target;
   }
 
@@ -130,14 +173,9 @@ export class UsersService {
    */
   async remove(id: string, actor: AuthUser) {
     if (id === actor.id) throw new BadRequestException('You cannot delete your own account');
-    const target = await this.target(id, actor);
+    const target = await this.target(id, actor, 'delete');
     if (target.email === 'system@prisim.internal') throw new BadRequestException('This account cannot be deleted');
-    if (target.roles.some((r) => r.role.key === 'super_admin')) {
-      const others = await this.prisma.user.count({
-        where: { id: { not: id }, isActive: true, deletedAt: null, roles: { some: { role: { key: 'super_admin' } } } },
-      });
-      if (!others) throw new BadRequestException('This is the last Super Admin, so it cannot be deleted');
-    }
+    if (target.isActive && target.roles.some((r) => r.role.key === 'super_admin')) await this.assertNotLastSuperAdmin(id);
     const reason = `${target.fullName} was removed from the CRM`;
     const released = await this.prisma.$transaction(async (tx) => {
       const leads = await tx.lead.findMany({ where: { assignedUserId: id, status: { notIn: CLOSED_STATUSES } }, select: { id: true, status: true } });
@@ -178,12 +216,16 @@ export class UsersService {
   }
 
   async update(id: string, dto: UpdateUserDto, actor: AuthUser) {
-    const before = await this.prisma.user.findFirst({ where: { id, deletedAt: null }, select: userSelect });
-    if (!before) throw new NotFoundException('User not found');
-    if (before.roles.some((r) => r.role.key === 'super_admin') && !actor.permissions.has('roles.manage')) {
-      throw new ForbiddenException('Only a Super Admin can edit a Super Admin account');
-    }
+    const target = await this.prisma.user.findFirst({ where: { id, deletedAt: null }, select: targetSelect });
+    if (!target) throw new NotFoundException('User not found');
+    this.assertOutranks(target, actor, 'edit');
     if (id === actor.id && dto.isActive === false) throw new BadRequestException('You cannot deactivate your own account');
+    // Deactivating or demoting a Super Admin must leave at least one active Super Admin.
+    const isSuper = target.isActive && target.roles.some((r) => r.role.key === 'super_admin');
+    const losesSuper = dto.isActive === false || (dto.roleKeys !== undefined && !dto.roleKeys.includes('super_admin'));
+    if (isSuper && losesSuper) await this.assertNotLastSuperAdmin(id);
+    await this.assertTeamExists(dto.teamId);
+    const before = await this.prisma.user.findUniqueOrThrow({ where: { id }, select: userSelect });
     const data: Prisma.UserUpdateInput = {};
     if (dto.fullName !== undefined) data.fullName = dto.fullName.trim();
     if (dto.email !== undefined) {
@@ -259,8 +301,8 @@ export class UsersController {
   @Get(':id/permissions')
   @RequireAny('roles.manage', 'users.manage')
   async getPermissions(@Param('id', ParseUUIDPipe) id: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id },
+    const user = await this.prisma.user.findFirst({
+      where: { id, deletedAt: null },
       select: {
         id: true, fullName: true, email: true,
         roles: { select: { role: { select: { key: true, name: true, permissions: { select: { permission: { select: { key: true } } } } } } } },
@@ -284,7 +326,7 @@ export class UsersController {
   async setPermissions(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UserPermissionsDto, @CurrentUser() actor: AuthUser) {
     if (id === actor.id) throw new BadRequestException("You can't change your own permissions. Ask another Super Admin.");
     if (dto.grants.some((g) => dto.denies.includes(g))) throw new BadRequestException('A permission cannot be both allowed and denied');
-    const user = await this.prisma.user.findUnique({ where: { id }, select: { id: true, permissionOverrides: { select: { effect: true, permission: { select: { key: true } } } } } });
+    const user = await this.prisma.user.findFirst({ where: { id, deletedAt: null }, select: { id: true, permissionOverrides: { select: { effect: true, permission: { select: { key: true } } } } } });
     if (!user) throw new NotFoundException('User not found');
     const keys = [...dto.grants, ...dto.denies];
     const perms = await this.prisma.permission.findMany({ where: { key: { in: keys } } });
@@ -332,6 +374,18 @@ export class UsersController {
 export class TeamsController {
   constructor(private prisma: PrismaService, private audit: AuditService) {}
 
+  private async assertLeader(leaderId: string | null | undefined) {
+    if (!leaderId) return;
+    const leader = await this.prisma.user.findFirst({ where: { id: leaderId, isActive: true, deletedAt: null }, select: { id: true } });
+    if (!leader) throw new BadRequestException('The team leader must be an active user');
+  }
+
+  private async existing(id: string) {
+    const team = await this.prisma.team.findUnique({ where: { id } });
+    if (!team) throw new NotFoundException('Team not found');
+    return team;
+  }
+
   @Get()
   list() {
     return this.prisma.team.findMany({
@@ -343,6 +397,7 @@ export class TeamsController {
   @Post()
   @RequireAny('teams.manage')
   async create(@Body() dto: TeamDto, @CurrentUser() actor: AuthUser) {
+    await this.assertLeader(dto.leaderId);
     const team = await this.prisma.team.create({ data: { name: dto.name.trim(), leaderId: dto.leaderId ?? null } });
     await this.audit.record({ actorId: actor.id, action: 'team.created', entityType: 'team', entityId: team.id, after: team });
     return team;
@@ -350,15 +405,24 @@ export class TeamsController {
 
   @Patch(':id')
   @RequireAny('teams.manage')
-  async update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: TeamDto, @CurrentUser() actor: AuthUser) {
-    const team = await this.prisma.team.update({ where: { id }, data: { name: dto.name.trim(), leaderId: dto.leaderId ?? null } });
-    await this.audit.record({ actorId: actor.id, action: 'team.updated', entityType: 'team', entityId: id, after: team });
+  async update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateTeamDto, @CurrentUser() actor: AuthUser) {
+    const before = await this.existing(id);
+    await this.assertLeader(dto.leaderId);
+    const team = await this.prisma.team.update({
+      where: { id },
+      data: {
+        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+        ...(dto.leaderId !== undefined ? { leaderId: dto.leaderId } : {}),
+      },
+    });
+    await this.audit.record({ actorId: actor.id, action: 'team.updated', entityType: 'team', entityId: id, before, after: team });
     return team;
   }
 
   @Delete(':id')
   @RequireAny('teams.manage')
   async remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() actor: AuthUser) {
+    await this.existing(id);
     await this.prisma.$transaction([
       this.prisma.user.updateMany({ where: { teamId: id }, data: { teamId: null } }),
       this.prisma.task.updateMany({ where: { teamId: id }, data: { teamId: null } }),
@@ -396,6 +460,7 @@ export class RolesController {
   @RequireAny('roles.manage')
   async create(@Body() dto: RoleDto, @CurrentUser() actor: AuthUser) {
     const key = dto.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    if (!key) throw new BadRequestException('The role name needs at least one letter or number');
     if (await this.prisma.role.findUnique({ where: { key } })) throw new ConflictException('A role with this name exists');
     const role = await this.prisma.role.create({ data: { key, name: dto.name, description: dto.description } });
     await this.audit.record({ actorId: actor.id, action: 'role.created', entityType: 'role', entityId: role.id, after: role });

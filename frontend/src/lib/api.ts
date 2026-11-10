@@ -1,4 +1,7 @@
 const BASE = '/api/v1';
+const EDGE_AUTH_ENABLED = import.meta.env.VITE_SUPABASE_EDGE_AUTH === 'true';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
 
 /** Access tokens are short-lived, so each request asks for a current one. */
 let getToken: () => Promise<string | null> = async () => null;
@@ -34,10 +37,21 @@ const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 async function request<T>(method: string, path: string, body?: unknown, query?: Query): Promise<T> {
   const isForm = body instanceof FormData;
-  const res = await fetch(BASE + path + qs(query), {
+  const useEdgeAuth = EDGE_AUTH_ENABLED && path === '/auth/me';
+  let url = BASE + path + qs(query);
+  const extraHeaders: Record<string, string> = {};
+  if (useEdgeAuth) {
+    if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+      throw new ApiError(500, 'Supabase URL and publishable key are required for Edge Function auth');
+    }
+    url = `${SUPABASE_URL}/functions/v1/crm${path}${qs(query)}`;
+    extraHeaders.apikey = SUPABASE_PUBLISHABLE_KEY;
+  }
+  const res = await fetch(url, {
     method,
     headers: {
       ...(await baseHeaders()),
+      ...extraHeaders,
       ...(body !== undefined && !isForm ? { 'Content-Type': 'application/json' } : {}),
     },
     body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
