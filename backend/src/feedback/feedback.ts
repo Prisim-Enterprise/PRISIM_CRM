@@ -64,7 +64,12 @@ export class FeedbackService {
 
   /** Keyed hash linking an anonymous submission to its author without storing who they are. */
   private hash(userId: string) {
-    return createHmac('sha256', process.env.FEEDBACK_HASH_SECRET || 'dev-secret').update(userId).digest('hex');
+    const secret = process.env.FEEDBACK_HASH_SECRET;
+    // A known fallback secret would let anyone with database access unmask anonymous feedback.
+    if (!secret && (process.env.VERCEL || process.env.NODE_ENV === 'production')) {
+      throw new Error('FEEDBACK_HASH_SECRET must be set');
+    }
+    return createHmac('sha256', secret || 'dev-secret').update(userId).digest('hex');
   }
 
   private isOwner(user: AuthUser, f: { submittedById: string | null; submitterHash: string | null }) {

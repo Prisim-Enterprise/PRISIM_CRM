@@ -83,7 +83,10 @@ export class ExotelProvider implements TelephonyProvider {
 
   async fetchRecording(url: string) {
     const u = new URL(url);
-    if (!u.hostname.endsWith('exotel.com') && !u.hostname.endsWith('exotel.in')) {
+    // Exact domain match: "endsWith('exotel.com')" would also accept e.g. "evilexotel.com" and send it our credentials.
+    const host = u.hostname.toLowerCase();
+    const isExotel = ['exotel.com', 'exotel.in'].some((d) => host === d || host.endsWith(`.${d}`));
+    if (u.protocol !== 'https:' || !isExotel) {
       throw new BadGatewayException('Recording URL is not an Exotel URL');
     }
     const res = await fetch(url, { headers: { Authorization: this.authHeader() } });

@@ -26,5 +26,8 @@
   "allowScripts": {
     "@prisma/engines@6.19.3": true,
     "esbuild@0.28.2": true
+  },
+  "overrides": {
+    "multer": "2.5.0"
   }
 }

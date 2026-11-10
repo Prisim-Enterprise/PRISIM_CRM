@@ -117,6 +117,12 @@ export class StorageService {
     if (m && (m[1] || m[2])) {
       const start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2]));
       const end = m[1] && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+      if (start > end || start >= size) {
+        // A range outside the file: refuse it (416) rather than erroring.
+        res.status(416).setHeader('Content-Range', `bytes */${size}`);
+        res.end();
+        return;
+      }
       res.status(206);
       res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`);
       res.setHeader('Content-Length', end - start + 1);
