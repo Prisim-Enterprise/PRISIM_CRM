@@ -11,6 +11,7 @@ export const PERMISSIONS = {
   'leads.assign.all': ['Leads', 'Assign or reassign any lead'],
   'leads.assign.team': ['Leads', 'Assign leads within own team'],
   'leads.export': ['Leads', 'Export lead data'],
+  'leads.delete': ['Leads', 'Delete leads permanently'],
   // Follow-ups
   'followups.view.all': ['Follow-ups', "View everyone's follow-ups"],
   'followups.view.team': ['Follow-ups', "View own team's follow-ups"],

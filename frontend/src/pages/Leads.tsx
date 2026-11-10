@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import clsx from 'clsx';
-import { Download, Plus, Search, Upload, UserPlus, AlertCircle, PhoneCall } from 'lucide-react';
+import { Download, Plus, Search, Trash2, Upload, UserPlus, AlertCircle, PhoneCall } from 'lucide-react';
 import { api, errMsg, Paged } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useDirectory } from '../lib/hooks';
@@ -31,6 +31,20 @@ export default function Leads() {
   const fileRef = useRef<HTMLInputElement>(null);
   const dir = useDirectory();
   const canAssign = can('leads.assign.all', 'leads.assign.team');
+  const canDelete = can('leads.delete');
+  const canSelect = canAssign || canDelete;
+  const [deleting, setDeleting] = useState(false);
+  const deleteSelected = async () => {
+    const n = selected.length;
+    if (!confirm(`Delete ${n} lead${n === 1 ? '' : 's'} permanently?\n\nTheir calls, recordings, notes and follow-ups are deleted too. Linked tasks stay. This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      const r = await api.post<{ deleted: number }>('/leads/delete', { ids: selected });
+      toast.success(`${r.deleted} lead${r.deleted === 1 ? '' : 's'} deleted`);
+      setSelected([]);
+      qc.invalidateQueries();
+    } catch (e) { toast.error(errMsg(e)); } finally { setDeleting(false); }
+  };
 
   const query = {
     search: get('search'), status: get('status'), owner: get('owner'), campaign: get('campaign'), source: get('source'),
@@ -114,10 +128,11 @@ export default function Leads() {
           </Select>
         </div>
 
-        {selected.length > 0 && canAssign && (
+        {selected.length > 0 && canSelect && (
           <div className="flex items-center gap-3 border-b border-indigo-100 bg-indigo-50 px-4 py-2 text-sm">
             <span className="font-medium text-indigo-900">{selected.length} selected</span>
-            <Button size="sm" onClick={() => setAssignOpen(true)}><UserPlus className="h-4 w-4" />Assign</Button>
+            {canAssign && <Button size="sm" onClick={() => setAssignOpen(true)}><UserPlus className="h-4 w-4" />Assign</Button>}
+            {canDelete && <Button size="sm" variant="danger" loading={deleting} onClick={deleteSelected}><Trash2 className="h-4 w-4" />Delete</Button>}
             <button className="text-indigo-700 hover:underline" onClick={() => setSelected([])}>Clear</button>
           </div>
         )}
@@ -129,14 +144,14 @@ export default function Leads() {
             <Table>
               <thead>
                 <tr>
-                  {canAssign && <Th className="w-8"><input type="checkbox" checked={allChecked} onChange={(e) => setSelected(e.target.checked ? [...new Set([...selected, ...allOnPage])] : selected.filter((x) => !allOnPage.includes(x)))} /></Th>}
+                  {canSelect && <Th className="w-8"><input type="checkbox" checked={allChecked} onChange={(e) => setSelected(e.target.checked ? [...new Set([...selected, ...allOnPage])] : selected.filter((x) => !allOnPage.includes(x)))} /></Th>}
                   <Th>Lead</Th><Th>Status</Th><Th>Campaign</Th><Th>Owner</Th><Th>Next follow-up</Th><Th className="text-right">Calls</Th><Th>Received</Th>
                 </tr>
               </thead>
               <tbody>
                 {data.items.map((l) => (
                   <tr key={l.id} className="cursor-pointer hover:bg-slate-50" onClick={() => nav(`/leads/${l.id}`)}>
-                    {canAssign && (
+                    {canSelect && (
                       <Td><input type="checkbox" checked={selected.includes(l.id)} onClick={(e) => e.stopPropagation()} onChange={(e) => setSelected(e.target.checked ? [...selected, l.id] : selected.filter((x) => x !== l.id))} /></Td>
                     )}
                     <Td>

@@ -264,6 +264,9 @@ export class LeadSyncService {
 
   private async processLead(sourceId: string, n: NormalizedLead, raw: Record<string, string>, sourceLabel: string): Promise<{ outcome: RowOutcome; leadId: string }> {
     const existing = await this.prisma.lead.findUnique({ where: { sourceId_externalLeadId: { sourceId, externalLeadId: n.externalLeadId } } });
+    if (!existing && (await this.prisma.deletedLead.findUnique({ where: { sourceId_externalLeadId: { sourceId, externalLeadId: n.externalLeadId } } }))) {
+      return { outcome: 'skipped', leadId: '' }; // Deleted in the CRM: don't bring it back.
+    }
     if (existing) {
       const data: Prisma.LeadUpdateInput = {};
       let changed = false;

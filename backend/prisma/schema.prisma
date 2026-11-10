@@ -159,9 +159,21 @@ model LeadSource {
   key       String   @unique // e.g. meta_ads, manual
   name      String
   leads     Lead[]
+  deletedLeads DeletedLead[]
   createdAt DateTime @default(now())
 
   @@map("lead_sources")
+}
+
+/// Source ids of deleted leads, so a sheet re-read or a repeated webhook doesn't bring them back.
+model DeletedLead {
+  sourceId       String     @db.Uuid
+  source         LeadSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  externalLeadId String
+  deletedAt      DateTime   @default(now())
+
+  @@id([sourceId, externalLeadId])
+  @@map("deleted_leads")
 }
 
 model Lead {

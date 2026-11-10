@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import clsx from 'clsx';
 import {
   ArrowLeft, Phone, PhoneCall, PhoneIncoming, PhoneOutgoing, CalendarPlus, NotebookPen, ArrowRightLeft, UserPlus, UserMinus,
-  Mail, MapPin, Megaphone, Pencil, CheckCircle2, Clock, XCircle, ListTodo, Copy,
+  Mail, MapPin, Megaphone, Pencil, CheckCircle2, Clock, XCircle, ListTodo, Copy, Trash2,
 } from 'lucide-react';
 import { api, errMsg } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -187,8 +187,17 @@ function TimelineItem({ e, canEdit, meId }: { e: Event; canEdit: boolean; meId?:
 
 export default function LeadDetail() {
   const { id } = useParams<{ id: string }>();
-  const { me } = useAuth();
+  const { me, can } = useAuth();
   const qc = useQueryClient();
+  const nav = useNavigate();
+  const removeLead = useMutation({
+    mutationFn: () => api.del(`/leads/${id}`),
+    onSuccess: () => { toast.success('Lead deleted'); qc.invalidateQueries(); nav('/leads', { replace: true }); },
+    onError: (e) => toast.error(errMsg(e)),
+  });
+  const confirmDelete = () => {
+    if (confirm('Delete this lead permanently?\n\nIts calls, recordings, notes and follow-ups are deleted too. Linked tasks stay. This cannot be undone.')) removeLead.mutate();
+  };
   const lead = useQuery({ queryKey: ['lead', id], queryFn: () => api.get<Lead>(`/leads/${id}`) });
   const timeline = useQuery({ queryKey: ['timeline', id], queryFn: () => api.get<Event[]>(`/leads/${id}/history`) });
   const pending = useQuery({ queryKey: ['follow-ups', 'lead', id], queryFn: () => api.get<{ items: FollowUp[] }>('/follow-ups', { leadId: id, view: 'pending', pageSize: 20 }) });
@@ -256,6 +265,7 @@ export default function LeadDetail() {
           {canAssign && <Button variant="secondary" onClick={() => setModal('assign')}><UserPlus className="h-4 w-4" />{l.assignedUser ? 'Reassign' : 'Assign'}</Button>}
           {canAssign && l.assignedUser && <Button variant="ghost" onClick={unassign} title="Unassign"><UserMinus className="h-4 w-4" /></Button>}
           <Button variant="ghost" onClick={() => setModal('task')} title="Create a task linked to this lead"><ListTodo className="h-4 w-4" />Task</Button>
+          {can('leads.delete') && <Button variant="ghost" className="text-rose-600 hover:bg-rose-50" loading={removeLead.isPending} onClick={confirmDelete} title="Delete this lead"><Trash2 className="h-4 w-4" />Delete</Button>}
         </div>
       </div>
 

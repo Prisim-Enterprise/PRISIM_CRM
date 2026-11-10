@@ -5,6 +5,11 @@ import {
 } from 'class-validator';
 import { OmitType } from '@nestjs/swagger';
 import { PageQuery } from '../common/pagination';
+import { ArrayMaxSize as MaxItems, ArrayMinSize as MinItems, IsArray as IsList, IsUUID as IsId } from 'class-validator';
+
+export class DeleteLeadsDto {
+  @IsList() @MinItems(1) @MaxItems(500) @IsId('all', { each: true }) ids: string[];
+}
 
 const toArray = ({ value }: { value: unknown }) =>
   value === undefined || value === '' ? undefined : Array.isArray(value) ? value : String(value).split(',');

@@ -1,9 +1,9 @@
-import { Body, Controller, Get, Module, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Module, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { AuthUser, CurrentUser, RequireAny } from '../common/current-user';
 import { LeadsService } from './leads.service';
-import { AssignDto, AssignOneDto, CreateLeadDto, LeadQuery, NoteDto, StatusDto, UnassignDto, UpdateLeadDto } from './leads.dto';
+import { AssignDto, AssignOneDto, CreateLeadDto, DeleteLeadsDto, LeadQuery, NoteDto, StatusDto, UnassignDto, UpdateLeadDto } from './leads.dto';
 
 @ApiTags('Leads')
 @ApiBearerAuth()
@@ -40,6 +40,18 @@ export class LeadsController {
   @RequireAny('leads.assign.all', 'leads.assign.team')
   assign(@CurrentUser() user: AuthUser, @Body() dto: AssignDto) {
     return this.leads.assign(user, dto);
+  }
+
+  @Post('delete')
+  @RequireAny('leads.delete')
+  removeMany(@CurrentUser() user: AuthUser, @Body() dto: DeleteLeadsDto) {
+    return this.leads.remove(user, dto.ids);
+  }
+
+  @Delete(':id')
+  @RequireAny('leads.delete')
+  remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.leads.remove(user, [id]);
   }
 
   @Get(':id')

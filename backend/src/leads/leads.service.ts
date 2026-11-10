@@ -3,6 +3,7 @@ import { Lead, LeadStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AccessService } from '../common/access.service';
 import { AuditService } from '../common/audit.service';
+import { StorageService } from '../common/storage.service';
 import { AuthUser } from '../common/current-user';
 import { NotificationsService } from '../notifications/notifications';
 import { normalizeEmail, normalizePhone } from '../common/phone';
@@ -22,7 +23,43 @@ export class LeadsService {
     private access: AccessService,
     private audit: AuditService,
     private notifications: NotificationsService,
+    private storage: StorageService,
   ) {}
+
+  /**
+   * Deletes leads for good, with their calls, notes, follow-ups and history. Linked tasks stay,
+   * without the link. Imports remember the source id, so the same lead isn't recreated.
+   */
+  async remove(user: AuthUser, ids: string[]) {
+    const leads = await this.prisma.lead.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true, fullName: true, phoneE164: true, email: true, sourceId: true, externalLeadId: true, assignedUserId: true,
+        calls: { where: { recordingKey: { not: null } }, select: { recordingKey: true } },
+      },
+    });
+    if (!leads.length) throw new NotFoundException('Lead not found');
+    for (const l of leads) await this.assertCanView(user, l);
+    const found = leads.map((l) => l.id);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.deletedLead.createMany({
+        data: leads.filter((l) => l.externalLeadId).map((l) => ({ sourceId: l.sourceId, externalLeadId: l.externalLeadId! })),
+        skipDuplicates: true,
+      });
+      await tx.lead.updateMany({ where: { duplicateOfId: { in: found } }, data: { duplicateOfId: null } });
+      await tx.lead.deleteMany({ where: { id: { in: found } } });
+    });
+    for (const key of leads.flatMap((l) => l.calls.map((c) => c.recordingKey!))) {
+      await this.storage.remove(key).catch(() => undefined); // The lead is gone either way.
+    }
+    for (const l of leads) {
+      await this.audit.record({
+        actorId: user.id, action: 'lead.deleted', entityType: 'lead', entityId: l.id,
+        before: { fullName: l.fullName, phone: l.phoneE164, email: l.email },
+      });
+    }
+    return { deleted: found.length };
+  }
 
   // ───────────── status (shared with calls, follow-ups and sync) ─────────────
 
