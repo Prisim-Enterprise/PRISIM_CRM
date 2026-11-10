@@ -136,6 +136,12 @@ function activityText(a: TaskFull['activities'][number]) {
   }
 }
 
+type Draft = { title: string; description: string; priority: string; assigneeId: string; due: string; requiresReview: boolean };
+const toDraft = (t: TaskFull): Draft => ({
+  title: t.title, description: t.description ?? '', priority: t.priority, assigneeId: t.assignee?.id ?? '',
+  due: t.dueAt ? toLocalInput(new Date(t.dueAt)) : '', requiresReview: t.requiresReview,
+});
+
 function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const { me } = useAuth();
   const qc = useQueryClient();
@@ -143,23 +149,48 @@ function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const { data: t, isLoading, error } = useQuery({ queryKey: ['task', id], queryFn: () => api.get<TaskFull>(`/tasks/${id}`) });
   const [comment, setComment] = useState('');
   const [item, setItem] = useState('');
-  const [desc, setDesc] = useState<string | null>(null);
-  const [title, setTitle] = useState<string | null>(null);
+  // Edits are kept here until Save changes, so refreshes from comments or the checklist don't wipe them.
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [saving, setSaving] = useState(false);
   const [sub, setSub] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const refresh = () => { qc.invalidateQueries({ queryKey: ['task', id] }); qc.invalidateQueries({ queryKey: ['tasks'] }); };
   const run = async (fn: () => Promise<unknown>, okMsg?: string) => {
     try { await fn(); if (okMsg) toast.success(okMsg); refresh(); } catch (e) { toast.error(errMsg(e)); }
   };
-  useEffect(() => { setDesc(null); setTitle(null); }, [id]);
+  useEffect(() => { setDraft(null); }, [id]);
 
   if (isLoading) return <Drawer open onClose={onClose}><Spinner /></Drawer>;
   if (error || !t) return <Drawer open onClose={onClose}><div className="p-5"><ErrorBox error={error ?? 'Not found'} /></div></Drawer>;
   const { canManage, canWork } = t.permissions;
-  const patch = (body: object) => run(() => api.patch(`/tasks/${id}`, body));
+  const saved = toDraft(t);
+  const d = draft ?? saved;
+  const edit = (change: Partial<Draft>) => setDraft({ ...d, ...change });
+  const changes: Record<string, unknown> = {};
+  if (d.title.trim() !== saved.title) changes.title = d.title.trim();
+  if (d.description !== saved.description) changes.description = d.description;
+  if (d.priority !== saved.priority) changes.priority = d.priority;
+  if (d.assigneeId !== saved.assigneeId) changes.assigneeId = d.assigneeId || null;
+  if (d.due !== saved.due) changes.dueAt = d.due ? new Date(d.due).toISOString() : null;
+  if (d.requiresReview !== saved.requiresReview) changes.requiresReview = d.requiresReview;
+  const dirty = Object.keys(changes).length > 0;
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.patch(`/tasks/${id}`, changes);
+      // Wait for the saved task before dropping the edits, so the old values don't flash back.
+      await qc.invalidateQueries({ queryKey: ['task', id] });
+      setDraft(null);
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+      toast.success('Task saved');
+    }
+    catch (e) { toast.error(errMsg(e)); }
+    finally { setSaving(false); }
+  };
+  const close = () => { if (!dirty || confirm('Discard your unsaved changes to this task?')) onClose(); };
 
   return (
-    <Drawer open onClose={onClose} title={
+    <Drawer open onClose={close} title={
       <div className="flex items-center gap-2 text-sm">
         {t.parent && <><button className="text-slate-500 hover:underline" onClick={() => qc.setQueryData(['open-task'], t.parent!.id)}>PRS-{t.parent.number}</button><span className="text-slate-400">/</span></>}
         <span className="font-mono text-slate-500">{t.key}</span>
@@ -169,11 +200,10 @@ function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
     }>
       <div className="space-y-6 p-5">
         <div>
-          {canManage && title !== null ? (
-            <div className="flex gap-2"><Input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
-              <Button size="sm" onClick={() => { patch({ title }); setTitle(null); }}>Save</Button><Button size="sm" variant="ghost" onClick={() => setTitle(null)}>Cancel</Button></div>
+          {canManage ? (
+            <Field label="Title"><Input value={d.title} onChange={(e) => edit({ title: e.target.value })} className="text-base font-semibold" /></Field>
           ) : (
-            <h2 className={clsx('text-lg font-semibold', canManage && 'cursor-text hover:bg-slate-50')} onClick={() => canManage && setTitle(t.title)}>{t.title}</h2>
+            <h2 className="text-lg font-semibold">{t.title}</h2>
           )}
           <p className="mt-1 text-xs text-slate-500">Created by {t.createdBy.fullName} {ago(t.createdAt)}</p>
         </div>
@@ -188,46 +218,52 @@ function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
         {t.reviewNote && t.status !== 'DONE' && <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><b>Review note:</b> {t.reviewNote}</div>}
 
         <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-          <Field label="Status">
+          <Field label="Status" hint="Saves straight away.">
             <Select value={t.status} disabled={!canWork} onChange={(e) => run(() => api.post(`/tasks/${id}/move`, { status: e.target.value }))}>
               {COLUMNS.map((c) => <option key={c} value={c}>{TASK_STATUS[c].label}</option>)}
             </Select>
           </Field>
           <Field label="Priority">
-            <Select value={t.priority} disabled={!canManage} onChange={(e) => patch({ priority: e.target.value })}>
+            <Select value={d.priority} disabled={!canManage} onChange={(e) => edit({ priority: e.target.value })}>
               {Object.entries(PRIORITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
             </Select>
           </Field>
           <Field label="Assignee">
-            <Select value={t.assignee?.id ?? ''} disabled={!canManage} onChange={(e) => patch({ assigneeId: e.target.value || null })}>
+            <Select value={d.assigneeId} disabled={!canManage} onChange={(e) => edit({ assigneeId: e.target.value })}>
               <option value="">Unassigned</option>
               {t.assignee && !assignees.some((a) => a.id === t.assignee!.id) && <option value={t.assignee.id}>{t.assignee.fullName}</option>}
               {assignees.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
             </Select>
           </Field>
           <Field label="Due">
-            <Input type="datetime-local" disabled={!canManage} defaultValue={t.dueAt ? toLocalInput(new Date(t.dueAt)) : ''} key={t.dueAt}
-              onBlur={(e) => { const v = e.target.value ? new Date(e.target.value).toISOString() : null; if (v !== t.dueAt) patch({ dueAt: v }); }} />
+            <Input type="datetime-local" disabled={!canManage} value={d.due} onChange={(e) => edit({ due: e.target.value })} />
           </Field>
           {t.lead && <div className="col-span-2 text-sm">Linked lead: <Link to={`/leads/${t.lead.id}`} className="text-indigo-700 hover:underline">{t.lead.fullName}</Link></div>}
           {canManage && (
             <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600">
-              <input type="checkbox" checked={t.requiresReview} onChange={(e) => patch({ requiresReview: e.target.checked })} />Requires manager review
+              <input type="checkbox" checked={d.requiresReview} onChange={(e) => edit({ requiresReview: e.target.checked })} />Requires manager review
             </label>
           )}
         </div>
 
         <section>
           <h3 className="mb-1.5 text-sm font-semibold">Description</h3>
-          {desc !== null ? (
-            <div className="space-y-2"><Textarea rows={5} value={desc} onChange={(e) => setDesc(e.target.value)} autoFocus />
-              <div className="flex gap-2"><Button size="sm" onClick={() => { patch({ description: desc }); setDesc(null); }}>Save</Button><Button size="sm" variant="ghost" onClick={() => setDesc(null)}>Cancel</Button></div></div>
+          {canWork ? (
+            <Textarea rows={5} value={d.description} onChange={(e) => edit({ description: e.target.value })} placeholder="Add a description…" />
           ) : (
-            <div onClick={() => canWork && setDesc(t.description ?? '')} className={clsx('min-h-12 whitespace-pre-wrap rounded-lg p-2 text-sm text-slate-700', canWork && 'cursor-text hover:bg-slate-50')}>
-              {t.description || <span className="text-slate-400">{canWork ? 'Add a description…' : 'No description'}</span>}
+            <div className="min-h-12 whitespace-pre-wrap rounded-lg p-2 text-sm text-slate-700">
+              {t.description || <span className="text-slate-400">No description</span>}
             </div>
           )}
         </section>
+
+        {(canManage || canWork) && (
+          <div className="sticky bottom-0 z-10 -mx-5 flex items-center justify-end gap-2 border-t border-slate-200 bg-surface px-5 py-3">
+            {dirty && <span className="mr-auto text-xs text-amber-700">Unsaved changes</span>}
+            <Button variant="secondary" disabled={!dirty || saving} onClick={() => setDraft(null)}>Discard</Button>
+            <Button loading={saving} disabled={!dirty || d.title.trim().length < 2} onClick={save}>Save changes</Button>
+          </div>
+        )}
 
         <section>
           <h3 className="mb-1.5 text-sm font-semibold">Checklist {t.checklist.length > 0 && <span className="font-normal text-slate-400">{t.checklist.filter((c) => c.done).length}/{t.checklist.length}</span>}</h3>
