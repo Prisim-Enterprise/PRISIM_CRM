@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import {
   LayoutDashboard, Users, CalendarClock, PhoneCall, KanbanSquare, MessageSquareText, Shield, Plug, ScrollText,
   Bell, LogOut, Menu, UserCog, X,
-  Building2, Clapperboard,
+  Building2, Clapperboard, TrendingUp,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -80,6 +80,7 @@ export default function Layout() {
     { to: '/tasks', label: 'Tasks', icon: KanbanSquare },
     { to: '/clients', label: 'Clients', icon: Building2 },
     { to: '/media', label: 'Media', icon: Clapperboard },
+    { to: '/seo', label: 'SEO', icon: TrendingUp },
     { to: '/feedback', label: 'Feedback & Queries', icon: MessageSquareText },
   ];
   const admin = [

@@ -59,6 +59,9 @@ model User {
   mediaAssigned       MediaItem[]          @relation("MediaAssignee")
   mediaCreated        MediaItem[]          @relation("MediaCreator")
   mediaExpenses       MediaExpense[]
+  seoAccountsCreated  SeoAccount[]
+  seoAssignments      SeoAssignee[]
+  seoUpdates          SeoUpdate[]
 
   @@index([teamId])
   @@map("users")
@@ -554,6 +557,7 @@ model Client {
   createdBy   User         @relation("ClientCreator", fields: [createdById], references: [id])
   works       ClientWork[]
   mediaItems  MediaItem[]
+  seoAccounts SeoAccount[]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
@@ -805,4 +809,61 @@ model MediaExpense {
   @@index([spentOn])
   @@index([shootId])
   @@map("media_expenses")
+}
+
+// ───── SEO: who handles which client, and their daily updates ─────
+
+enum SeoStatus {
+  ACTIVE
+  PAUSED
+  ENDED
+}
+
+/// SEO work for one client (or one of a client's websites), and the people handling it.
+model SeoAccount {
+  id          String        @id @default(uuid()) @db.Uuid
+  clientId    String        @db.Uuid
+  client      Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  website     String?
+  scope       String?
+  status      SeoStatus     @default(ACTIVE)
+  createdById String        @db.Uuid
+  createdBy   User          @relation(fields: [createdById], references: [id])
+  assignees   SeoAssignee[]
+  updates     SeoUpdate[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([clientId])
+  @@map("seo_accounts")
+}
+
+model SeoAssignee {
+  accountId String     @db.Uuid
+  account   SeoAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  userId    String     @db.Uuid
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@id([accountId, userId])
+  @@index([userId])
+  @@map("seo_assignees")
+}
+
+/// A daily note of SEO work done for a client, by the person who did it.
+model SeoUpdate {
+  id        String     @id @default(uuid()) @db.Uuid
+  accountId String     @db.Uuid
+  account   SeoAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  authorId  String     @db.Uuid
+  author    User       @relation(fields: [authorId], references: [id])
+  workDate  DateTime   @db.Date
+  body      String
+  link      String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([accountId, workDate])
+  @@index([authorId, workDate])
+  @@map("seo_updates")
 }

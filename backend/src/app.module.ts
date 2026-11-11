@@ -19,6 +19,7 @@ import { IntegrationsModule } from './integrations/integrations';
 import { JobsModule } from './jobs/jobs';
 import { ClientsModule } from './clients/clients';
 import { MediaModule } from './media/media';
+import { SeoModule } from './seo/seo';
 import { AuthModule } from './auth/auth';
 
 @Controller('health')
@@ -53,6 +54,7 @@ class HealthController {
     IntegrationsModule,
     ClientsModule,
     MediaModule,
+    SeoModule,
     JobsModule,
   ],
   controllers: [HealthController],

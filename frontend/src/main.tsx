@@ -19,6 +19,7 @@ import Feedback from './pages/Feedback';
 import Clients, { ClientDetail } from './pages/Clients';
 import FeedbackDetail from './pages/FeedbackDetail';
 import Media from './pages/Media';
+import Seo from './pages/Seo';
 import Profile from './pages/Profile';
 import AdminUsers from './pages/admin/Users';
 import AdminRoles from './pages/admin/Roles';
@@ -55,6 +56,7 @@ function App() {
         <Route path="clients" element={<Clients />} />
         <Route path="clients/:id" element={<ClientDetail />} />
         <Route path="media" element={<Media />} />
+        <Route path="seo" element={<Seo />} />
         <Route path="feedback" element={<Feedback />} />
         <Route path="feedback/:id" element={<FeedbackDetail />} />
         <Route path="profile" element={<Profile />} />

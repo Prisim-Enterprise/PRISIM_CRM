@@ -36,6 +36,9 @@ export const PERMISSIONS = {
   'media.view.all': ['Media', 'View the whole media schedule'],
   'media.manage': ['Media', 'Add, edit and assign media schedule entries'],
   'media.expenses': ['Media', 'View and record shoot and model expenses'],
+  // SEO
+  'seo.view.all': ['SEO', 'View every SEO client and all daily updates'],
+  'seo.manage': ['SEO', 'Add SEO clients and choose who handles them'],
   // Reports
   'reports.view.all': ['Reports', 'View organisation-wide reports'],
   'reports.view.team': ['Reports', 'View team reports'],
