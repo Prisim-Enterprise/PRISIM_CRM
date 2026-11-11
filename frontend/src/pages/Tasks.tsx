@@ -121,12 +121,12 @@ export function CreateTaskModal({ open, onClose, defaults }: { open: boolean; on
 function TaskCard({ t, onOpen, onDragStart, onMove }: { t: TaskRow; onOpen: () => void; onDragStart: (e: DragEvent) => void; onMove: (status: string) => void }) {
   return (
     <div draggable onDragStart={onDragStart} onClick={onOpen}
-      className="cursor-pointer rounded-lg border border-slate-200 bg-surface p-3 shadow-sm transition hover:border-indigo-300 hover:shadow">
+      className="min-w-0 cursor-pointer rounded-lg border border-slate-200 bg-surface p-3 shadow-sm transition hover:border-indigo-300 hover:shadow">
       <div className="mb-1.5 flex items-center justify-between gap-2">
         <span className="font-mono text-[11px] text-slate-400">{t.key}</span>
         <Badge className={PRIORITY[t.priority].color}>{PRIORITY[t.priority].label}</Badge>
       </div>
-      <p className="text-sm font-medium leading-snug text-slate-800">{t.title}</p>
+      <p className="text-sm font-medium leading-snug text-slate-800 [overflow-wrap:anywhere]">{t.title}</p>
       {t.lead && <p className="mt-1 flex items-center gap-1 text-xs text-indigo-700"><Link2 className="h-3 w-3" />{t.lead.fullName}</p>}
       <div className="mt-2.5 flex items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-400">
@@ -245,7 +245,7 @@ function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
           {canManage ? (
             <Field label="Title"><Input value={d.title} onChange={(e) => edit({ title: e.target.value })} className="text-base font-semibold" /></Field>
           ) : (
-            <h2 className="text-lg font-semibold">{t.title}</h2>
+            <h2 className="text-lg font-semibold [overflow-wrap:anywhere]">{t.title}</h2>
           )}
           <p className="mt-1 text-xs text-slate-500">Created by {t.createdBy.fullName} {ago(t.createdAt)}</p>
         </div>
@@ -540,7 +540,7 @@ export default function Tasks() {
                 {data.map((t) => (
                   <tr key={t.id} className="cursor-pointer hover:bg-slate-50" onClick={() => setOpen(t.id)}>
                     <Td className="font-mono text-xs text-slate-500">{t.key}</Td>
-                    <Td className="font-medium">{t.title}{t.lead && <span className="ml-2 text-xs text-indigo-700">· {t.lead.fullName}</span>}</Td>
+                    <Td className="max-w-md font-medium [overflow-wrap:anywhere]">{t.title}{t.lead && <span className="ml-2 text-xs text-indigo-700">· {t.lead.fullName}</span>}</Td>
                     <Td><Badge className={TASK_STATUS[t.status].color}>{TASK_STATUS[t.status].label}</Badge></Td>
                     <Td><Badge className={PRIORITY[t.priority].color}>{PRIORITY[t.priority].label}</Badge></Td>
                     <Td>{peopleOf(t).length ? <span className="flex items-center gap-2"><AvatarStack people={peopleOf(t)} /><span className="max-w-56 truncate">{peopleOf(t).map((p) => p.fullName).join(', ')}</span></span> : '—'}</Td>
