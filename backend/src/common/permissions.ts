@@ -32,6 +32,10 @@ export const PERMISSIONS = {
   // Clients
   'clients.view.all': ['Clients', 'View every client, work item and update'],
   'clients.manage': ['Clients', 'Add clients and post work to anyone'],
+  // Media
+  'media.view.all': ['Media', 'View the whole media schedule'],
+  'media.manage': ['Media', 'Add, edit and assign media schedule entries'],
+  'media.expenses': ['Media', 'View and record shoot and model expenses'],
   // Reports
   'reports.view.all': ['Reports', 'View organisation-wide reports'],
   'reports.view.team': ['Reports', 'View team reports'],

@@ -14,48 +14,51 @@ datasource db {
 // ───────────────────────── Users, teams, roles ─────────────────────────
 
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
+  id           String    @id @default(uuid()) @db.Uuid
   fullName     String
-  email        String   @unique
+  email        String    @unique
   phone        String? // agent phone in E.164, used for click-to-call
   // Sign-in is handled by Supabase Auth. Filled in the first time this person signs in.
-  authUserId   String?  @unique
+  authUserId   String?   @unique
   passwordHash String? // legacy, unused
-  isActive     Boolean  @default(true)
-  timezone     String   @default("Asia/Kolkata")
-  teamId       String?  @db.Uuid
-  team         Team?    @relation("TeamMembers", fields: [teamId], references: [id])
+  isActive     Boolean   @default(true)
+  timezone     String    @default("Asia/Kolkata")
+  teamId       String?   @db.Uuid
+  team         Team?     @relation("TeamMembers", fields: [teamId], references: [id])
   lastLoginAt  DateTime?
   // Deleted users stay as rows so past calls, leads and audit entries keep their name.
   deletedAt    DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  roles              UserRole[]
+  roles               UserRole[]
   permissionOverrides UserPermission[]
-  ledTeams          Team[]              @relation("TeamLeader")
-  assignedLeads      Lead[]              @relation("LeadOwner")
-  assignments        LeadAssignment[]    @relation("AssignmentUser")
-  assignmentsMade    LeadAssignment[]    @relation("AssignmentActor")
-  statusChanges      LeadStatusHistory[]
-  notes              LeadNote[]
-  followUps          FollowUp[]          @relation("FollowUpOwner")
-  followUpsCreated   FollowUp[]          @relation("FollowUpCreator")
-  calls              CallLog[]
-  tasksAssigned      Task[]              @relation("TaskAssignee")
-  tasksCreated       Task[]              @relation("TaskCreator")
-  taskComments       TaskComment[]
-  taskActivities     TaskActivity[]
-  feedbackSubmitted  Feedback[]          @relation("FeedbackSubmitter")
-  feedbackAssigned   Feedback[]          @relation("FeedbackAssignee")
-  feedbackResponses  FeedbackResponse[]
-  attachments        Attachment[]
-  notifications      Notification[]
-  auditLogs          AuditLog[]
-  clientsCreated     Client[]            @relation("ClientCreator")
-  clientWorkCreated  ClientWork[]        @relation("ClientWorkCreator")
-  clientWorkAssigned ClientWorkAssignee[]
-  clientWorkUpdates  ClientWorkUpdate[]
+  ledTeams            Team[]               @relation("TeamLeader")
+  assignedLeads       Lead[]               @relation("LeadOwner")
+  assignments         LeadAssignment[]     @relation("AssignmentUser")
+  assignmentsMade     LeadAssignment[]     @relation("AssignmentActor")
+  statusChanges       LeadStatusHistory[]
+  notes               LeadNote[]
+  followUps           FollowUp[]           @relation("FollowUpOwner")
+  followUpsCreated    FollowUp[]           @relation("FollowUpCreator")
+  calls               CallLog[]
+  tasksAssigned       Task[]               @relation("TaskAssignee")
+  tasksCreated        Task[]               @relation("TaskCreator")
+  taskComments        TaskComment[]
+  taskActivities      TaskActivity[]
+  feedbackSubmitted   Feedback[]           @relation("FeedbackSubmitter")
+  feedbackAssigned    Feedback[]           @relation("FeedbackAssignee")
+  feedbackResponses   FeedbackResponse[]
+  attachments         Attachment[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+  clientsCreated      Client[]             @relation("ClientCreator")
+  clientWorkCreated   ClientWork[]         @relation("ClientWorkCreator")
+  clientWorkAssigned  ClientWorkAssignee[]
+  clientWorkUpdates   ClientWorkUpdate[]
+  mediaAssigned       MediaItem[]          @relation("MediaAssignee")
+  mediaCreated        MediaItem[]          @relation("MediaCreator")
+  mediaExpenses       MediaExpense[]
 
   @@index([teamId])
   @@map("users")
@@ -89,11 +92,11 @@ model Role {
 }
 
 model Permission {
-  id          String           @id @default(uuid()) @db.Uuid
-  key         String           @unique
-  group       String
-  description String
-  roles       RolePermission[]
+  id            String           @id @default(uuid()) @db.Uuid
+  key           String           @unique
+  group         String
+  description   String
+  roles         RolePermission[]
   userOverrides UserPermission[]
 
   @@map("permissions")
@@ -155,12 +158,12 @@ enum LeadStatus {
 }
 
 model LeadSource {
-  id        String   @id @default(uuid()) @db.Uuid
-  key       String   @unique // e.g. meta_ads, manual
-  name      String
-  leads     Lead[]
+  id           String        @id @default(uuid()) @db.Uuid
+  key          String        @unique // e.g. meta_ads, manual
+  name         String
+  leads        Lead[]
   deletedLeads DeletedLead[]
-  createdAt DateTime @default(now())
+  createdAt    DateTime      @default(now())
 
   @@map("lead_sources")
 }
@@ -277,26 +280,26 @@ enum FollowUpStatus {
 }
 
 model FollowUp {
-  id               String         @id @default(uuid()) @db.Uuid
-  leadId           String         @db.Uuid
-  lead             Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  ownerId          String         @db.Uuid
-  owner            User           @relation("FollowUpOwner", fields: [ownerId], references: [id])
-  createdById      String         @db.Uuid
-  createdBy        User           @relation("FollowUpCreator", fields: [createdById], references: [id])
-  type             String         @default("call") // call | whatsapp | email | meeting | other
-  dueAt            DateTime
-  note             String?
-  status           FollowUpStatus @default(PENDING)
-  outcome          String?
-  completedAt      DateTime?
-  cancelReason     String?
-  rescheduleCount  Int            @default(0)
-  reminderSentAt   DateTime?
-  overdueNotified  Boolean        @default(false)
-  reschedules      FollowUpReschedule[]
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  id              String               @id @default(uuid()) @db.Uuid
+  leadId          String               @db.Uuid
+  lead            Lead                 @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  ownerId         String               @db.Uuid
+  owner           User                 @relation("FollowUpOwner", fields: [ownerId], references: [id])
+  createdById     String               @db.Uuid
+  createdBy       User                 @relation("FollowUpCreator", fields: [createdById], references: [id])
+  type            String               @default("call") // call | whatsapp | email | meeting | other
+  dueAt           DateTime
+  note            String?
+  status          FollowUpStatus       @default(PENDING)
+  outcome         String?
+  completedAt     DateTime?
+  cancelReason    String?
+  rescheduleCount Int                  @default(0)
+  reminderSentAt  DateTime?
+  overdueNotified Boolean              @default(false)
+  reschedules     FollowUpReschedule[]
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
 
   @@index([ownerId, status, dueAt])
   @@index([leadId])
@@ -336,28 +339,28 @@ enum CallStatus {
 }
 
 model CallLog {
-  id                 String        @id @default(uuid()) @db.Uuid
-  leadId             String        @db.Uuid
-  lead               Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  userId             String        @db.Uuid
-  user               User          @relation(fields: [userId], references: [id])
-  provider           String        @default("manual") // manual | exotel | mock
-  providerCallId     String?
-  direction          CallDirection @default(OUTBOUND)
-  fromNumber         String?
-  toNumber           String?
-  status             CallStatus    @default(COMPLETED)
-  startedAt          DateTime?
-  endedAt            DateTime?
-  durationSeconds    Int?
+  id              String        @id @default(uuid()) @db.Uuid
+  leadId          String        @db.Uuid
+  lead            Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  userId          String        @db.Uuid
+  user            User          @relation(fields: [userId], references: [id])
+  provider        String        @default("manual") // manual | exotel | mock
+  providerCallId  String?
+  direction       CallDirection @default(OUTBOUND)
+  fromNumber      String?
+  toNumber        String?
+  status          CallStatus    @default(COMPLETED)
+  startedAt       DateTime?
+  endedAt         DateTime?
+  durationSeconds Int?
   // Employee disposition: CONNECTED, NO_ANSWER, BUSY, INTERESTED, CALLBACK,
   // NOT_INTERESTED, WRONG_NUMBER, SWITCHED_OFF, CONVERTED
-  outcome            String?
-  notes              String?
-  recordingUrl       String? // provider URL (fetched via proxy, never exposed raw)
-  recordingKey       String? // locally stored / uploaded recording
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
+  outcome         String?
+  notes           String?
+  recordingUrl    String? // provider URL (fetched via proxy, never exposed raw)
+  recordingKey    String? // locally stored / uploaded recording
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
   @@unique([provider, providerCallId])
   @@index([leadId, createdAt])
@@ -384,32 +387,32 @@ enum TaskStatus {
 }
 
 model Task {
-  id             String       @id @default(uuid()) @db.Uuid
-  number         Int          @unique @default(autoincrement())
-  title          String
-  description    String?
-  createdById    String       @db.Uuid
-  createdBy      User         @relation("TaskCreator", fields: [createdById], references: [id])
-  assigneeId     String?      @db.Uuid
-  assignee       User?        @relation("TaskAssignee", fields: [assigneeId], references: [id])
-  teamId         String?      @db.Uuid
-  team           Team?        @relation(fields: [teamId], references: [id])
-  leadId         String?      @db.Uuid
-  lead           Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
-  parentId       String?      @db.Uuid
-  parent         Task?        @relation("Subtasks", fields: [parentId], references: [id], onDelete: Cascade)
-  subtasks       Task[]       @relation("Subtasks")
-  priority       TaskPriority @default(MEDIUM)
-  status         TaskStatus   @default(TODO)
-  requiresReview Boolean      @default(false)
-  reviewNote     String?
-  position       Float        @default(0)
-  startAt        DateTime?
-  dueAt          DateTime?
-  completedAt    DateTime?
-  overdueNotified Boolean     @default(false)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id              String       @id @default(uuid()) @db.Uuid
+  number          Int          @unique @default(autoincrement())
+  title           String
+  description     String?
+  createdById     String       @db.Uuid
+  createdBy       User         @relation("TaskCreator", fields: [createdById], references: [id])
+  assigneeId      String?      @db.Uuid
+  assignee        User?        @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  teamId          String?      @db.Uuid
+  team            Team?        @relation(fields: [teamId], references: [id])
+  leadId          String?      @db.Uuid
+  lead            Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  parentId        String?      @db.Uuid
+  parent          Task?        @relation("Subtasks", fields: [parentId], references: [id], onDelete: Cascade)
+  subtasks        Task[]       @relation("Subtasks")
+  priority        TaskPriority @default(MEDIUM)
+  status          TaskStatus   @default(TODO)
+  requiresReview  Boolean      @default(false)
+  reviewNote      String?
+  position        Float        @default(0)
+  startAt         DateTime?
+  dueAt           DateTime?
+  completedAt     DateTime?
+  overdueNotified Boolean      @default(false)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   comments    TaskComment[]
   checklist   TaskChecklistItem[]
@@ -477,26 +480,26 @@ enum FeedbackStatus {
 }
 
 model Feedback {
-  id              String         @id @default(uuid()) @db.Uuid
-  kind            FeedbackKind   @default(FEEDBACK)
+  id              String             @id @default(uuid()) @db.Uuid
+  kind            FeedbackKind       @default(FEEDBACK)
   // Null when anonymous. Anonymous submitters are linked only through a keyed hash
   // so they can still see their own submissions; reviewers never see identity.
-  submittedById   String?        @db.Uuid
-  submittedBy     User?          @relation("FeedbackSubmitter", fields: [submittedById], references: [id])
+  submittedById   String?            @db.Uuid
+  submittedBy     User?              @relation("FeedbackSubmitter", fields: [submittedById], references: [id])
   submitterHash   String?
-  isAnonymous     Boolean        @default(false)
+  isAnonymous     Boolean            @default(false)
   category        String
   subject         String
   description     String
-  priority        TaskPriority   @default(MEDIUM)
-  status          FeedbackStatus @default(SUBMITTED)
-  assignedAdminId String?        @db.Uuid
-  assignedAdmin   User?          @relation("FeedbackAssignee", fields: [assignedAdminId], references: [id])
+  priority        TaskPriority       @default(MEDIUM)
+  status          FeedbackStatus     @default(SUBMITTED)
+  assignedAdminId String?            @db.Uuid
+  assignedAdmin   User?              @relation("FeedbackAssignee", fields: [assignedAdminId], references: [id])
   resolvedAt      DateTime?
   responses       FeedbackResponse[]
   attachments     Attachment[]
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
 
   @@index([status, createdAt])
   @@index([submittedById])
@@ -505,17 +508,17 @@ model Feedback {
 }
 
 model FeedbackResponse {
-  id         String   @id @default(uuid()) @db.Uuid
-  feedbackId String   @db.Uuid
-  feedback   Feedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  id            String          @id @default(uuid()) @db.Uuid
+  feedbackId    String          @db.Uuid
+  feedback      Feedback        @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
   // Null author = reply from the anonymous submitter
-  authorId   String?  @db.Uuid
-  author     User?    @relation(fields: [authorId], references: [id])
-  fromSubmitter Boolean @default(false)
-  body       String
-  isInternal Boolean  @default(false) // internal admin note, hidden from submitter
-  statusChange FeedbackStatus?
-  createdAt  DateTime @default(now())
+  authorId      String?         @db.Uuid
+  author        User?           @relation(fields: [authorId], references: [id])
+  fromSubmitter Boolean         @default(false)
+  body          String
+  isInternal    Boolean         @default(false) // internal admin note, hidden from submitter
+  statusChange  FeedbackStatus?
+  createdAt     DateTime        @default(now())
 
   @@index([feedbackId, createdAt])
   @@map("feedback_responses")
@@ -550,6 +553,7 @@ model Client {
   createdById String       @db.Uuid
   createdBy   User         @relation("ClientCreator", fields: [createdById], references: [id])
   works       ClientWork[]
+  mediaItems  MediaItem[]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
@@ -609,20 +613,20 @@ model ClientWorkUpdate {
 // ───────────────────────── Files ─────────────────────────
 
 model Attachment {
-  id           String    @id @default(uuid()) @db.Uuid
-  storageKey   String    @unique
+  id           String      @id @default(uuid()) @db.Uuid
+  storageKey   String      @unique
   fileName     String
   mimeType     String
   sizeBytes    Int
-  uploadedById String?   @db.Uuid // null for anonymous feedback
-  uploadedBy   User?     @relation(fields: [uploadedById], references: [id])
-  taskId       String?   @db.Uuid
-  task         Task?     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  feedbackId   String?   @db.Uuid
-  feedback     Feedback? @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  uploadedById String?     @db.Uuid // null for anonymous feedback
+  uploadedBy   User?       @relation(fields: [uploadedById], references: [id])
+  taskId       String?     @db.Uuid
+  task         Task?       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  feedbackId   String?     @db.Uuid
+  feedback     Feedback?   @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
   clientWorkId String?     @db.Uuid
   clientWork   ClientWork? @relation(fields: [clientWorkId], references: [id], onDelete: Cascade)
-  createdAt    DateTime  @default(now())
+  createdAt    DateTime    @default(now())
 
   @@map("attachments")
 }
@@ -664,17 +668,17 @@ enum SyncRunStatus {
 }
 
 model SyncRun {
-  id         String        @id @default(uuid()) @db.Uuid
-  trigger    String        // schedule | manual | retry | reconcile | csv | webhook
-  source     String?       // lead source key the rows were imported into (meta_ads, website, ...)
-  status     SyncRunStatus @default(RUNNING)
-  rowsRead   Int           @default(0)
-  created    Int           @default(0)
-  updated    Int           @default(0)
-  skipped    Int           @default(0)
-  failed     Int           @default(0)
+  id         String         @id @default(uuid()) @db.Uuid
+  trigger    String // schedule | manual | retry | reconcile | csv | webhook
+  source     String? // lead source key the rows were imported into (meta_ads, website, ...)
+  status     SyncRunStatus  @default(RUNNING)
+  rowsRead   Int            @default(0)
+  created    Int            @default(0)
+  updated    Int            @default(0)
+  skipped    Int            @default(0)
+  failed     Int            @default(0)
   error      String?
-  startedAt  DateTime      @default(now())
+  startedAt  DateTime       @default(now())
   finishedAt DateTime?
   rowErrors  SyncRowError[]
 
@@ -725,4 +729,80 @@ model WebhookEvent {
 
   @@unique([provider, eventId])
   @@map("webhook_events")
+}
+
+// ───── Media: production schedules and shoot expenses ─────
+
+enum MediaKind {
+  SHOOT
+  REEL
+  CONTENT
+  IMAGE
+}
+
+enum MediaStatus {
+  PLANNED
+  IN_PROGRESS
+  READY
+  DONE
+  CANCELLED
+}
+
+enum MediaExpenseCategory {
+  MODEL
+  LOCATION
+  EQUIPMENT
+  TRAVEL
+  FOOD
+  PROPS
+  OTHER
+}
+
+/// One entry on a media schedule: a shoot, a reel to post, a piece of content to write, or an image to post.
+model MediaItem {
+  id          String         @id @default(uuid()) @db.Uuid
+  kind        MediaKind
+  title       String
+  scheduledAt DateTime
+  status      MediaStatus    @default(PLANNED)
+  assigneeId  String?        @db.Uuid
+  assignee    User?          @relation("MediaAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  clientId    String?        @db.Uuid
+  client      Client?        @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  platform    String?
+  location    String?
+  models      String?
+  link        String?
+  notes       String?
+  createdById String         @db.Uuid
+  createdBy   User           @relation("MediaCreator", fields: [createdById], references: [id])
+  expenses    MediaExpense[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([kind, scheduledAt])
+  @@index([assigneeId])
+  @@map("media_items")
+}
+
+/// Money spent on production: model fees, location, equipment and so on, optionally tied to a shoot.
+model MediaExpense {
+  id          String               @id @default(uuid()) @db.Uuid
+  spentOn     DateTime             @db.Date
+  category    MediaExpenseCategory
+  payee       String
+  description String?
+  amount      Decimal              @db.Decimal(12, 2)
+  paid        Boolean              @default(false)
+  paidOn      DateTime?            @db.Date
+  shootId     String?              @db.Uuid
+  shoot       MediaItem?           @relation(fields: [shootId], references: [id], onDelete: SetNull)
+  createdById String               @db.Uuid
+  createdBy   User                 @relation(fields: [createdById], references: [id])
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@index([spentOn])
+  @@index([shootId])
+  @@map("media_expenses")
 }
