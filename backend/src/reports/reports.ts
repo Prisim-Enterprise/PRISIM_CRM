@@ -67,7 +67,7 @@ export class ReportsService {
     const userScope = ids === null ? {} : { in: ids };
     const callWhere: Prisma.CallLogWhereInput = { createdAt: inRange, ...(ids === null ? {} : { userId: userScope }), ...(q.campaign || q.source ? { lead: leadScope } : {}) };
     const fuScope: Prisma.FollowUpWhereInput = ids === null ? {} : { ownerId: userScope };
-    const taskScope: Prisma.TaskWhereInput = ids === null ? {} : { assigneeId: userScope };
+    const taskScope: Prisma.TaskWhereInput = ids === null ? {} : { OR: [{ assigneeId: userScope }, { assignees: { some: { userId: userScope } } }] };
 
     const connectedWhere: Prisma.CallLogWhereInput = {
       ...callWhere,
@@ -251,8 +251,8 @@ export class ReportsService {
       this.prisma.followUp.groupBy({ by: ['ownerId'], where: { ownerId: { in: uids }, status: 'COMPLETED', completedAt: inRange }, _count: true }),
       this.prisma.followUp.groupBy({ by: ['ownerId'], where: { ownerId: { in: uids }, status: 'PENDING', dueAt: { lt: now } }, _count: true }),
       this.prisma.leadStatusHistory.groupBy({ by: ['actorId'], where: { actorId: { in: uids }, toStatus: 'CONVERTED', createdAt: inRange }, _count: true }),
-      this.prisma.task.groupBy({ by: ['assigneeId'], where: { assigneeId: { in: uids }, status: 'DONE', completedAt: inRange }, _count: true }),
-      this.prisma.task.groupBy({ by: ['assigneeId'], where: { assigneeId: { in: uids }, status: { not: 'DONE' }, dueAt: { lt: now } }, _count: true }),
+      this.prisma.taskAssignee.groupBy({ by: ['userId'], where: { userId: { in: uids }, task: { status: 'DONE', completedAt: inRange } }, _count: true }),
+      this.prisma.taskAssignee.groupBy({ by: ['userId'], where: { userId: { in: uids }, task: { status: { not: 'DONE' }, dueAt: { lt: now } } }, _count: true }),
     ]);
     const pick = <T extends { _count: number }>(arr: T[], key: keyof T, id: string) => arr.find((r) => r[key] === id)?._count ?? 0;
     return users.map((u) => {
@@ -266,7 +266,7 @@ export class ReportsService {
         talkTimeSeconds: talk.find((t) => t.userId === u.id)?._sum.durationSeconds ?? 0,
         followUpsCompleted: pick(fuDone, 'ownerId', u.id), missedFollowUps: pick(fuMissed, 'ownerId', u.id),
         converted: conv, conversionPerAssigned: leadsAssigned ? conv / leadsAssigned : null,
-        tasksCompleted: pick(tasksDone, 'assigneeId', u.id), overdueTasks: pick(tasksOverdue, 'assigneeId', u.id),
+        tasksCompleted: pick(tasksDone, 'userId', u.id), overdueTasks: pick(tasksOverdue, 'userId', u.id),
       };
     });
   }

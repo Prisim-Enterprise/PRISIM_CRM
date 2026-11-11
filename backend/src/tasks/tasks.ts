@@ -6,7 +6,7 @@ import { FileUpload } from '../common/file-upload';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
-  IsBoolean, IsDateString, IsEnum, IsIn, IsNumber, IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateIf,
+  ArrayMaxSize, IsArray, IsBoolean, IsDateString, IsEnum, IsIn, IsNumber, IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateIf,
 } from 'class-validator';
 import { Prisma, TaskPriority, TaskStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -34,7 +34,9 @@ class TaskQuery {
 class CreateTaskDto {
   @IsString() @MinLength(2) @MaxLength(200) title: string;
   @IsOptional() @IsString() @MaxLength(10000) description?: string;
+  /** Older single-assignee form; assigneeIds takes priority. */
   @IsOptional() @IsUUID() assigneeId?: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @IsUUID('all', { each: true }) assigneeIds?: string[];
   @IsOptional() @IsUUID() teamId?: string;
   @IsOptional() @IsUUID() leadId?: string;
   @IsOptional() @IsUUID() parentId?: string;
@@ -48,6 +50,7 @@ class UpdateTaskDto {
   @IsOptional() @IsString() @MinLength(2) @MaxLength(200) title?: string;
   @IsOptional() @IsString() @MaxLength(10000) description?: string | null;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() assigneeId?: string | null;
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @IsUUID('all', { each: true }) assigneeIds?: string[];
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() teamId?: string | null;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() leadId?: string | null;
   @IsOptional() @IsEnum(TaskPriority) priority?: TaskPriority;
@@ -80,8 +83,10 @@ class ChecklistUpdateDto {
 }
 
 const person = { select: { id: true, fullName: true } } as const;
+const assigneesInclude = { include: { user: person }, orderBy: { createdAt: 'asc' } } as const;
 const listInclude = {
   assignee: person,
+  assignees: assigneesInclude,
   createdBy: person,
   team: { select: { id: true, name: true } },
   lead: { select: { id: true, fullName: true } },
@@ -90,6 +95,10 @@ const listInclude = {
 } satisfies Prisma.TaskInclude;
 
 const TERMINAL: TaskStatus[] = ['DONE'];
+/** Everyone on a task: the assignees list, or the single assignee for rows written before it existed. */
+const peopleOn = (t: { assigneeId: string | null; assignees?: { userId: string }[] }) =>
+  t.assignees?.length ? t.assignees.map((a) => a.userId) : t.assigneeId ? [t.assigneeId] : [];
+const onTask = (userId: string): Prisma.TaskWhereInput => ({ OR: [{ assigneeId: userId }, { assignees: { some: { userId } } }] });
 
 @Injectable()
 export class TasksService {
@@ -104,53 +113,68 @@ export class TasksService {
   private async visibleWhere(user: AuthUser): Promise<Prisma.TaskWhereInput> {
     const s = this.access.scope(user, 'tasks.view');
     if (s === 'all') return {};
-    const mine: Prisma.TaskWhereInput[] = [{ assigneeId: user.id }, { createdById: user.id }];
+    const mine: Prisma.TaskWhereInput[] = [onTask(user.id), { createdById: user.id }];
     if (s === 'team') {
       const ids = await this.access.teamMemberIds(user);
-      mine.push({ assigneeId: { in: ids } }, { teamId: { in: user.teamIds } });
+      mine.push({ assigneeId: { in: ids } }, { assignees: { some: { userId: { in: ids } } } }, { teamId: { in: user.teamIds } });
     }
     return { OR: mine };
   }
 
-  private async canManage(user: AuthUser, task: { createdById: string; assigneeId: string | null; teamId: string | null }) {
+  private async canManage(user: AuthUser, task: { createdById: string; assigneeId: string | null; teamId: string | null; assignees?: { userId: string }[] }) {
     if (task.createdById === user.id) return true;
     const s = this.access.scope(user, 'tasks.manage');
     if (s === 'all') return true;
     if (s === 'team') {
       if (task.teamId && user.teamIds.includes(task.teamId)) return true;
-      return task.assigneeId ? (await this.access.teamMemberIds(user)).includes(task.assigneeId) : false;
+      const team = await this.access.teamMemberIds(user);
+      return peopleOn(task).some((id) => team.includes(id));
     }
     return false;
   }
 
   private async load(user: AuthUser, id: string) {
-    const task = await this.prisma.task.findUnique({ where: { id } });
+    const task = await this.prisma.task.findUnique({ where: { id }, include: { assignees: { select: { userId: true }, orderBy: { createdAt: 'asc' } } } });
     if (!task) throw new NotFoundException('Task not found');
     const visible = await this.prisma.task.count({ where: { AND: [{ id }, await this.visibleWhere(user)] } });
     if (!visible) throw new NotFoundException('Task not found');
     const canManage = await this.canManage(user, task);
-    const canWork = canManage || task.assigneeId === user.id;
-    return { task, canManage, canWork };
+    const people = peopleOn(task);
+    const canWork = canManage || people.includes(user.id);
+    return { task, people, canManage, canWork };
   }
 
   private activity(tx: Prisma.TransactionClient | PrismaService, taskId: string, actorId: string, action: string, detail?: object) {
     return tx.taskActivity.create({ data: { taskId, actorId, action, detail: detail as Prisma.InputJsonValue } });
   }
 
-  private async assertCanAssignTo(user: AuthUser, assigneeId: string | null | undefined) {
-    if (!assigneeId || assigneeId === user.id) return;
+  private async assertCanAssignTo(user: AuthUser, assigneeIds: string[]) {
+    const others = assigneeIds.filter((id) => id !== user.id);
+    if (!others.length) return;
     if (!user.permissions.has('tasks.create_for_others')) throw new ForbiddenException('You can only create tasks for yourself');
+    const found = await this.prisma.user.count({ where: { id: { in: others }, isActive: true, deletedAt: null } });
+    if (found !== others.length) throw new BadRequestException('One or more people are inactive or do not exist');
     const s = this.access.scope(user, 'tasks.manage');
     if (s === 'all') return;
-    if (s === 'team' && (await this.access.teamMemberIds(user)).includes(assigneeId)) return;
+    if (s === 'team') {
+      const team = await this.access.teamMemberIds(user);
+      if (others.every((id) => team.includes(id))) return;
+    }
     throw new ForbiddenException('You can only assign tasks to members of your team');
+  }
+
+  /** The new assignee list from a request: assigneeIds, or the older single assigneeId. Undefined means unchanged. */
+  private wanted(dto: { assigneeId?: string | null; assigneeIds?: string[] }) {
+    if (dto.assigneeIds !== undefined) return [...new Set(dto.assigneeIds)];
+    if (dto.assigneeId !== undefined) return dto.assigneeId ? [dto.assigneeId] : [];
+    return undefined;
   }
 
   async list(user: AuthUser, q: TaskQuery) {
     const and: Prisma.TaskWhereInput[] = [await this.visibleWhere(user), { parentId: null }];
-    if (q.assignee === 'me') and.push({ assigneeId: user.id });
-    else if (q.assignee === 'unassigned') and.push({ assigneeId: null });
-    else if (q.assignee) and.push({ assigneeId: q.assignee });
+    if (q.assignee === 'me') and.push(onTask(user.id));
+    else if (q.assignee === 'unassigned') and.push({ assigneeId: null, assignees: { none: {} } });
+    else if (q.assignee) and.push(onTask(q.assignee));
     if (q.createdByMe === 'true') and.push({ createdById: user.id });
     if (q.teamId) and.push({ teamId: q.teamId });
     if (q.leadId) and.push({ leadId: q.leadId });
@@ -180,10 +204,10 @@ export class TasksService {
     const task = await this.prisma.task.findUniqueOrThrow({
       where: { id },
       include: {
-        assignee: person, createdBy: person, team: { select: { id: true, name: true } },
+        assignee: person, assignees: assigneesInclude, createdBy: person, team: { select: { id: true, name: true } },
         lead: { select: { id: true, fullName: true, phoneE164: true } },
         parent: { select: { id: true, number: true, title: true } },
-        subtasks: { include: { assignee: person }, orderBy: { createdAt: 'asc' } },
+        subtasks: { include: { assignee: person, assignees: assigneesInclude }, orderBy: { createdAt: 'asc' } },
         checklist: { orderBy: [{ position: 'asc' }, { createdAt: 'asc' }] },
         comments: { include: { author: person }, orderBy: { createdAt: 'asc' } },
         attachments: { include: { uploadedBy: person }, orderBy: { createdAt: 'desc' } },
@@ -200,8 +224,9 @@ export class TasksService {
   }
 
   async create(user: AuthUser, dto: CreateTaskDto) {
-    const assigneeId = dto.assigneeId ?? (dto.teamId ? undefined : user.id);
-    await this.assertCanAssignTo(user, assigneeId);
+    // No one chosen: a team task stays unassigned, anything else is the creator's own.
+    const people = this.wanted(dto) ?? (dto.teamId ? [] : [user.id]);
+    await this.assertCanAssignTo(user, people);
     if (dto.parentId) {
       const { canWork } = await this.load(user, dto.parentId);
       if (!canWork) throw new ForbiddenException('You cannot add subtasks here');
@@ -211,7 +236,8 @@ export class TasksService {
     const task = await this.prisma.$transaction(async (tx) => {
       const t = await tx.task.create({
         data: {
-          title: dto.title.trim(), description: dto.description, createdById: user.id, assigneeId: assigneeId ?? null,
+          title: dto.title.trim(), description: dto.description, createdById: user.id, assigneeId: people[0] ?? null,
+          assignees: { create: people.map((userId, i) => ({ userId, createdAt: new Date(Date.now() + i) })) },
           teamId: dto.teamId, leadId: dto.leadId, parentId: dto.parentId, priority: dto.priority ?? 'MEDIUM',
           startAt: dto.startAt ? new Date(dto.startAt) : null, dueAt: dto.dueAt ? new Date(dto.dueAt) : null,
           requiresReview: dto.requiresReview ?? false, position: (max._max.position ?? 0) + 1000,
@@ -220,23 +246,26 @@ export class TasksService {
       await this.activity(tx, t.id, user.id, 'created');
       return t;
     });
-    if (task.assigneeId && task.assigneeId !== user.id) {
-      await this.notifications.notify(task.assigneeId, {
-        type: 'task.assigned', title: `New task: PRS-${task.number} ${task.title}`,
-        body: `${task.priority} priority, from ${user.fullName}`, link: `/tasks?open=${task.id}`,
-      });
-    }
+    const others = people.length - 1;
+    await this.notifications.notifyMany(people.filter((id) => id !== user.id), {
+      type: 'task.assigned', title: `New task: PRS-${task.number} ${task.title}`,
+      body: `${task.priority} priority, from ${user.fullName}${others > 0 ? ` · shared with ${others} other${others > 1 ? 's' : ''}` : ''}`,
+      link: `/tasks?open=${task.id}`,
+    });
     return task;
   }
 
   async update(user: AuthUser, id: string, dto: UpdateTaskDto) {
-    const { task, canManage, canWork } = await this.load(user, id);
-    const managerFields: (keyof UpdateTaskDto)[] = ['assigneeId', 'teamId', 'priority', 'dueAt', 'startAt', 'requiresReview', 'title'];
+    const { task, people: before, canManage, canWork } = await this.load(user, id);
+    const managerFields: (keyof UpdateTaskDto)[] = ['assigneeId', 'assigneeIds', 'teamId', 'priority', 'dueAt', 'startAt', 'requiresReview', 'title'];
     if (!canWork) throw new ForbiddenException('You cannot edit this task');
     if (!canManage && managerFields.some((f) => dto[f] !== undefined)) {
       throw new ForbiddenException('Only the task creator or a manager can change these fields');
     }
-    if (dto.assigneeId !== undefined && dto.assigneeId !== task.assigneeId) await this.assertCanAssignTo(user, dto.assigneeId);
+    const people = this.wanted(dto);
+    const peopleChanged = !!people && (people.length !== before.length || people.some((p, i) => p !== before[i]));
+    const added = people ? people.filter((p) => !before.includes(p)) : [];
+    if (peopleChanged) await this.assertCanAssignTo(user, added);
     const data: Prisma.TaskUncheckedUpdateInput = {};
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     const set = <K extends keyof Prisma.TaskUncheckedUpdateInput>(k: K, v: Prisma.TaskUncheckedUpdateInput[K], from: unknown) => {
@@ -245,7 +274,7 @@ export class TasksService {
     };
     if (dto.title !== undefined) set('title', dto.title.trim(), task.title);
     if (dto.description !== undefined) data.description = dto.description;
-    if (dto.assigneeId !== undefined) set('assigneeId', dto.assigneeId, task.assigneeId);
+    if (people && peopleChanged) { data.assigneeId = people[0] ?? null; changes.assignees = { from: before, to: people }; }
     if (dto.teamId !== undefined) set('teamId', dto.teamId, task.teamId);
     if (dto.leadId !== undefined) set('leadId', dto.leadId, task.leadId);
     if (dto.priority !== undefined) set('priority', dto.priority, task.priority);
@@ -253,24 +282,30 @@ export class TasksService {
     if (dto.dueAt !== undefined) { set('dueAt', dto.dueAt ? new Date(dto.dueAt) : null, task.dueAt); data.overdueNotified = false; }
     if (dto.requiresReview !== undefined) set('requiresReview', dto.requiresReview, task.requiresReview);
     const updated = await this.prisma.$transaction(async (tx) => {
+      if (people && peopleChanged) {
+        await tx.taskAssignee.deleteMany({ where: { taskId: id, userId: { notIn: people } } });
+        // Kept in the chosen order, so the first person stays first.
+        for (const [i, userId] of people.entries()) {
+          const createdAt = new Date(Date.now() + i);
+          await tx.taskAssignee.upsert({ where: { taskId_userId: { taskId: id, userId } }, update: { createdAt }, create: { taskId: id, userId, createdAt } });
+        }
+      }
       const t = await tx.task.update({ where: { id }, data });
       if (Object.keys(changes).length) await this.activity(tx, id, user.id, 'updated', changes);
       else if (dto.description !== undefined) await this.activity(tx, id, user.id, 'description_updated');
       return t;
     });
-    if (dto.assigneeId && dto.assigneeId !== task.assigneeId && dto.assigneeId !== user.id) {
-      await this.notifications.notify(dto.assigneeId, {
-        type: 'task.assigned', title: `Task assigned to you: PRS-${task.number} ${updated.title}`, body: `By ${user.fullName}`, link: `/tasks?open=${id}`,
-      });
-    }
+    await this.notifications.notifyMany(added.filter((p) => p !== user.id), {
+      type: 'task.assigned', title: `Task assigned to you: PRS-${task.number} ${updated.title}`, body: `By ${user.fullName}`, link: `/tasks?open=${id}`,
+    });
     return updated;
   }
 
   async move(user: AuthUser, id: string, dto: MoveDto) {
-    const { task, canManage, canWork } = await this.load(user, id);
+    const { task, people, canManage, canWork } = await this.load(user, id);
     if (!canWork) throw new ForbiddenException('You cannot move this task');
     // Tasks that need review go through REVIEW; only a manager can approve them to DONE.
-    if (dto.status === 'DONE' && task.requiresReview && task.status !== 'DONE' && !(canManage && task.assigneeId !== user.id)) {
+    if (dto.status === 'DONE' && task.requiresReview && task.status !== 'DONE' && !(canManage && !people.includes(user.id))) {
       throw new BadRequestException('This task needs manager review. Move it to Review instead.');
     }
     const statusChanged = dto.status !== task.status;
@@ -299,7 +334,7 @@ export class TasksService {
   }
 
   async review(user: AuthUser, id: string, dto: ReviewDto) {
-    const { task, canManage } = await this.load(user, id);
+    const { task, people, canManage } = await this.load(user, id);
     if (!canManage) throw new ForbiddenException('Only the task creator or a manager can review');
     if (task.status !== 'REVIEW') throw new BadRequestException('Task is not waiting for review');
     if (dto.decision === 'reject' && !dto.note?.trim()) throw new BadRequestException('Add a note explaining what needs to change');
@@ -309,7 +344,7 @@ export class TasksService {
       await this.activity(tx, id, user.id, dto.decision === 'approve' ? 'review_approved' : 'review_rejected', { note: dto.note });
       if (dto.note?.trim()) await tx.taskComment.create({ data: { taskId: id, authorId: user.id, body: `Review ${dto.decision === 'approve' ? 'approved' : 'changes requested'}: ${dto.note.trim()}` } });
     });
-    await this.notifications.notify(task.assigneeId, {
+    await this.notifications.notifyMany(people.filter((p) => p !== user.id), {
       type: 'task.reviewed',
       title: `${dto.decision === 'approve' ? 'Approved' : 'Changes requested'}: PRS-${task.number} ${task.title}`,
       body: dto.note, link: `/tasks?open=${id}`,
@@ -328,9 +363,9 @@ export class TasksService {
   }
 
   async comment(user: AuthUser, id: string, body: string) {
-    const { task } = await this.load(user, id);
+    const { task, people } = await this.load(user, id);
     const c = await this.prisma.taskComment.create({ data: { taskId: id, authorId: user.id, body: body.trim() }, include: { author: person } });
-    const notify = [task.assigneeId, task.createdById].filter((u): u is string => !!u && u !== user.id);
+    const notify = [...new Set([...people, task.createdById])].filter((u) => u !== user.id);
     await this.notifications.notifyMany(notify, {
       type: 'task.comment', title: `${user.fullName} commented on PRS-${task.number}`, body: body.slice(0, 140), link: `/tasks?open=${id}`,
     });
@@ -391,11 +426,12 @@ export class TaskReminders {
   async overdue() {
     try {
       const tasks = await this.prisma.task.findMany({
-        where: { dueAt: { lt: new Date() }, status: { notIn: TERMINAL }, overdueNotified: false, assigneeId: { not: null } },
+        where: { dueAt: { lt: new Date() }, status: { notIn: TERMINAL }, overdueNotified: false, OR: [{ assigneeId: { not: null } }, { assignees: { some: {} } }] },
+        include: { assignees: { select: { userId: true } } },
         take: 500,
       });
       for (const t of tasks) {
-        await this.notifications.notify(t.assigneeId, { type: 'task.overdue', title: `Overdue task: PRS-${t.number} ${t.title}`, link: `/tasks?open=${t.id}` });
+        await this.notifications.notifyMany(peopleOn(t), { type: 'task.overdue', title: `Overdue task: PRS-${t.number} ${t.title}`, link: `/tasks?open=${t.id}` });
         await this.prisma.task.update({ where: { id: t.id }, data: { overdueNotified: true } });
       }
     } catch (e) {

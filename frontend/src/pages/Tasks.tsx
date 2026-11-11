@@ -17,7 +17,7 @@ import {
 interface Person { id: string; fullName: string }
 interface TaskRow {
   id: string; key: string; number: number; title: string; status: string; priority: string; position: number; dueAt: string | null;
-  isOverdue: boolean; requiresReview: boolean; assignee: Person | null; createdBy: Person; team: { id: string; name: string } | null;
+  isOverdue: boolean; requiresReview: boolean; assignee: Person | null; assignees: { userId: string; user: Person }[]; createdBy: Person; team: { id: string; name: string } | null;
   lead: { id: string; fullName: string } | null; checklistDone: number;
   _count: { comments: number; subtasks: number; attachments: number; checklist: number };
 }
@@ -42,15 +42,47 @@ function useAssignees() {
   return dir.data?.filter((u) => u.id === me?.id || (u.teamId && me?.teamIds.includes(u.teamId))) ?? [];
 }
 
+/** Everyone on a task, first person first. Falls back to the single assignee for older rows. */
+const peopleOf = (t: { assignee: Person | null; assignees?: { user: Person }[] }): Person[] =>
+  t.assignees?.length ? t.assignees.map((a) => a.user) : t.assignee ? [t.assignee] : [];
+
+/** Chips for the chosen people, and a menu to add more. */
+function PeoplePicker({ value, onChange, options, extra = [], disabled, meId }: {
+  value: string[]; onChange: (v: string[]) => void; options: Person[]; extra?: Person[]; disabled?: boolean; meId?: string;
+}) {
+  const all = [...options, ...extra.filter((e) => !options.some((o) => o.id === e.id))];
+  const name = (id: string) => all.find((p) => p.id === id)?.fullName ?? 'Someone';
+  const left = options.filter((o) => !value.includes(o.id));
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {!value.length && <span className="py-1 text-sm text-slate-400">No one yet</span>}
+        {value.map((id) => (
+          <span key={id} className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 py-0.5 pl-0.5 pr-1.5 text-sm text-slate-700">
+            <Avatar name={name(id)} size="sm" />{name(id)}{id === meId && <span className="text-xs text-slate-400">(me)</span>}
+            {!disabled && <button type="button" onClick={() => onChange(value.filter((v) => v !== id))} aria-label={`Remove ${name(id)}`} className="rounded-full p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700"><X className="h-3.5 w-3.5" /></button>}
+          </span>
+        ))}
+      </div>
+      {!disabled && left.length > 0 && (
+        <Select value="" onChange={(e) => e.target.value && onChange([...value, e.target.value])} aria-label="Add a person">
+          <option value="">+ Add a person…</option>
+          {left.map((u) => <option key={u.id} value={u.id}>{u.id === meId ? `${u.fullName} (me)` : u.fullName}</option>)}
+        </Select>
+      )}
+    </div>
+  );
+}
+
 export function CreateTaskModal({ open, onClose, defaults }: { open: boolean; onClose: () => void; defaults?: { leadId?: string; title?: string; parentId?: string; status?: string } }) {
   const { me } = useAuth();
   const assignees = useAssignees();
   const teams = useTeams();
   const qc = useQueryClient();
-  const [f, setF] = useState({ title: defaults?.title ?? '', description: '', assigneeId: me?.id ?? '', priority: 'MEDIUM', dueAt: '', teamId: '', requiresReview: false });
+  const [f, setF] = useState({ title: defaults?.title ?? '', description: '', assigneeIds: me?.id ? [me.id] : [] as string[], priority: 'MEDIUM', dueAt: '', teamId: '', requiresReview: false });
   const m = useMutation({
     mutationFn: () => api.post('/tasks', {
-      title: f.title, description: f.description || undefined, assigneeId: f.assigneeId || undefined, priority: f.priority,
+      title: f.title, description: f.description || undefined, assigneeIds: f.assigneeIds, priority: f.priority,
       dueAt: f.dueAt ? new Date(f.dueAt).toISOString() : undefined, teamId: f.teamId || undefined, requiresReview: f.requiresReview,
       leadId: defaults?.leadId, parentId: defaults?.parentId,
     }),
@@ -61,12 +93,12 @@ export function CreateTaskModal({ open, onClose, defaults }: { open: boolean; on
       footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={m.isPending} disabled={f.title.trim().length < 2} onClick={() => m.mutate()}>Create task</Button></>}>
       <Field label="Title"><Input autoFocus value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="What needs to be done?" /></Field>
       <Field label="Description"><Textarea rows={4} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder="Details, expected outcome, links…" /></Field>
+      <div>
+        <p className="mb-1 text-sm font-medium text-slate-700">Assigned to</p>
+        <PeoplePicker value={f.assigneeIds} onChange={(v) => setF({ ...f, assigneeIds: v })} options={assignees} meId={me?.id} />
+        {f.assigneeIds.length > 1 && <p className="mt-1 text-xs text-slate-500">One shared task: they all see it, can move it and get its updates.</p>}
+      </div>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Assignee">
-          <Select value={f.assigneeId} onChange={(e) => setF({ ...f, assigneeId: e.target.value })}>
-            {assignees.map((u) => <option key={u.id} value={u.id}>{u.id === me?.id ? `${u.fullName} (me)` : u.fullName}</option>)}
-          </Select>
-        </Field>
         <Field label="Priority">
           <Select value={f.priority} onChange={(e) => setF({ ...f, priority: e.target.value })}>
             {Object.entries(PRIORITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
@@ -115,10 +147,20 @@ function TaskCard({ t, onOpen, onDragStart, onMove }: { t: TaskRow; onOpen: () =
           >
             {COLUMNS.map((c) => <option key={c} value={c}>{c === t.status ? 'Move…' : TASK_STATUS[c].label}</option>)}
           </select>
-          {t.assignee ? <Avatar name={t.assignee.fullName} size="sm" /> : <span className="text-[11px] text-slate-400">Unassigned</span>}
+          <AvatarStack people={peopleOf(t)} />
         </div>
       </div>
     </div>
+  );
+}
+
+function AvatarStack({ people, max = 3 }: { people: Person[]; max?: number }) {
+  if (!people.length) return <span className="text-[11px] text-slate-400">Unassigned</span>;
+  return (
+    <span className="flex -space-x-1.5" title={people.map((p) => p.fullName).join(', ')}>
+      {people.slice(0, max).map((p) => <span key={p.id} className="rounded-full ring-2 ring-white"><Avatar name={p.fullName} size="sm" /></span>)}
+      {people.length > max && <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-[10px] font-semibold text-slate-600 ring-2 ring-white">+{people.length - max}</span>}
+    </span>
   );
 }
 
@@ -131,14 +173,14 @@ function activityText(a: TaskFull['activities'][number]) {
     case 'review_rejected': return 'requested changes';
     case 'attachment_added': return `attached ${d.fileName}`;
     case 'description_updated': return 'updated the description';
-    case 'updated': return `changed ${Object.keys(d).map((k) => k.replace(/Id$/, '').replace(/At$/, ' date')).join(', ')}`;
+    case 'updated': return `changed ${Object.keys(d).map((k) => (k === 'assignees' ? 'who is assigned' : k.replace(/Id$/, '').replace(/At$/, ' date'))).join(', ')}`;
     default: return a.action;
   }
 }
 
-type Draft = { title: string; description: string; priority: string; assigneeId: string; due: string; requiresReview: boolean };
+type Draft = { title: string; description: string; priority: string; assigneeIds: string[]; due: string; requiresReview: boolean };
 const toDraft = (t: TaskFull): Draft => ({
-  title: t.title, description: t.description ?? '', priority: t.priority, assigneeId: t.assignee?.id ?? '',
+  title: t.title, description: t.description ?? '', priority: t.priority, assigneeIds: peopleOf(t).map((p) => p.id),
   due: t.dueAt ? toLocalInput(new Date(t.dueAt)) : '', requiresReview: t.requiresReview,
 });
 
@@ -170,7 +212,7 @@ function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   if (d.title.trim() !== saved.title) changes.title = d.title.trim();
   if (d.description !== saved.description) changes.description = d.description;
   if (d.priority !== saved.priority) changes.priority = d.priority;
-  if (d.assigneeId !== saved.assigneeId) changes.assigneeId = d.assigneeId || null;
+  if (d.assigneeIds.join() !== saved.assigneeIds.join()) changes.assigneeIds = d.assigneeIds;
   if (d.due !== saved.due) changes.dueAt = d.due ? new Date(d.due).toISOString() : null;
   if (d.requiresReview !== saved.requiresReview) changes.requiresReview = d.requiresReview;
   const dirty = Object.keys(changes).length > 0;
@@ -208,7 +250,7 @@ function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
           <p className="mt-1 text-xs text-slate-500">Created by {t.createdBy.fullName} {ago(t.createdAt)}</p>
         </div>
 
-        {t.status === 'REVIEW' && canManage && t.assignee?.id !== me?.id && (
+        {t.status === 'REVIEW' && canManage && !peopleOf(t).some((p) => p.id === me?.id) && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 p-3">
             <span className="flex-1 text-sm text-violet-900">This task is waiting for your review.</span>
             <Button size="sm" variant="success" onClick={() => run(() => api.post(`/tasks/${id}/review`, { decision: 'approve' }), 'Approved')}><Check className="h-4 w-4" />Approve</Button>
@@ -228,13 +270,10 @@ function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
               {Object.entries(PRIORITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
             </Select>
           </Field>
-          <Field label="Assignee">
-            <Select value={d.assigneeId} disabled={!canManage} onChange={(e) => edit({ assigneeId: e.target.value })}>
-              <option value="">Unassigned</option>
-              {t.assignee && !assignees.some((a) => a.id === t.assignee!.id) && <option value={t.assignee.id}>{t.assignee.fullName}</option>}
-              {assignees.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
-            </Select>
-          </Field>
+          <div className="col-span-2">
+            <p className="mb-1 text-sm font-medium text-slate-700">Assigned to</p>
+            <PeoplePicker value={d.assigneeIds} onChange={(v) => edit({ assigneeIds: v })} options={assignees} extra={peopleOf(t)} disabled={!canManage} meId={me?.id} />
+          </div>
           <Field label="Due">
             <Input type="datetime-local" disabled={!canManage} value={d.due} onChange={(e) => edit({ due: e.target.value })} />
           </Field>
@@ -496,7 +535,7 @@ export default function Tasks() {
         <Card>
           {!data?.length ? <Empty title="No tasks" /> : (
             <Table>
-              <thead><tr><Th>Key</Th><Th>Title</Th><Th>Status</Th><Th>Priority</Th><Th>Assignee</Th><Th>Due</Th><Th>Progress</Th></tr></thead>
+              <thead><tr><Th>Key</Th><Th>Title</Th><Th>Status</Th><Th>Priority</Th><Th>Assigned to</Th><Th>Due</Th><Th>Progress</Th></tr></thead>
               <tbody>
                 {data.map((t) => (
                   <tr key={t.id} className="cursor-pointer hover:bg-slate-50" onClick={() => setOpen(t.id)}>
@@ -504,7 +543,7 @@ export default function Tasks() {
                     <Td className="font-medium">{t.title}{t.lead && <span className="ml-2 text-xs text-indigo-700">· {t.lead.fullName}</span>}</Td>
                     <Td><Badge className={TASK_STATUS[t.status].color}>{TASK_STATUS[t.status].label}</Badge></Td>
                     <Td><Badge className={PRIORITY[t.priority].color}>{PRIORITY[t.priority].label}</Badge></Td>
-                    <Td>{t.assignee ? <span className="flex items-center gap-2"><Avatar name={t.assignee.fullName} size="sm" />{t.assignee.fullName}</span> : '—'}</Td>
+                    <Td>{peopleOf(t).length ? <span className="flex items-center gap-2"><AvatarStack people={peopleOf(t)} /><span className="max-w-56 truncate">{peopleOf(t).map((p) => p.fullName).join(', ')}</span></span> : '—'}</Td>
                     <Td className={clsx('whitespace-nowrap', t.isOverdue && 'font-semibold text-rose-600')}>{fmtDate(t.dueAt)}</Td>
                     <Td className="text-xs text-slate-500">{t._count.checklist ? `${t.checklistDone}/${t._count.checklist} items` : '—'}</Td>
                   </tr>

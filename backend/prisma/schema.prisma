@@ -43,6 +43,7 @@ model User {
   followUpsCreated    FollowUp[]           @relation("FollowUpCreator")
   calls               CallLog[]
   tasksAssigned       Task[]               @relation("TaskAssignee")
+  taskAssignments     TaskAssignee[]
   tasksCreated        Task[]               @relation("TaskCreator")
   taskComments        TaskComment[]
   taskActivities      TaskActivity[]
@@ -417,6 +418,8 @@ model Task {
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
+  /// Everyone working on the task. assigneeId mirrors the first of them, for reports and older screens.
+  assignees   TaskAssignee[]
   comments    TaskComment[]
   checklist   TaskChecklistItem[]
   attachments Attachment[]
@@ -426,6 +429,18 @@ model Task {
   @@index([teamId, status])
   @@index([status, dueAt])
   @@map("tasks")
+}
+
+model TaskAssignee {
+  taskId    String   @db.Uuid
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([taskId, userId])
+  @@index([userId])
+  @@map("task_assignees")
 }
 
 model TaskChecklistItem {

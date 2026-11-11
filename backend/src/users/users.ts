@@ -184,7 +184,13 @@ export class UsersService {
       await tx.leadStatusHistory.createMany({ data: leads.map((l) => ({ leadId: l.id, fromStatus: l.status, toStatus: 'UNASSIGNED' as const, actorId: actor.id, reason })) });
       await tx.leadAssignment.updateMany({ where: { userId: id, endedAt: null }, data: { endedAt: new Date() } });
       const followUps = await tx.followUp.updateMany({ where: { ownerId: id, status: 'PENDING' }, data: { status: 'CANCELLED', cancelReason: reason } });
-      const tasks = await tx.task.updateMany({ where: { assigneeId: id, status: { not: 'DONE' } }, data: { assigneeId: null } });
+      const openTasks = await tx.task.findMany({
+        where: { status: { not: 'DONE' }, OR: [{ assigneeId: id }, { assignees: { some: { userId: id } } }] },
+        select: { id: true, assignees: { where: { userId: { not: id } }, select: { userId: true }, orderBy: { createdAt: 'asc' } } },
+      });
+      await tx.taskAssignee.deleteMany({ where: { userId: id, taskId: { in: openTasks.map((t) => t.id) } } });
+      for (const t of openTasks) await tx.task.update({ where: { id: t.id }, data: { assigneeId: t.assignees[0]?.userId ?? null } });
+      const tasks = { count: openTasks.length };
       await tx.clientWorkAssignee.deleteMany({ where: { userId: id } });
       await tx.feedback.updateMany({ where: { assignedAdminId: id, status: { notIn: ['RESOLVED', 'CLOSED'] } }, data: { assignedAdminId: null } });
       await tx.team.updateMany({ where: { leaderId: id }, data: { leaderId: null } });
