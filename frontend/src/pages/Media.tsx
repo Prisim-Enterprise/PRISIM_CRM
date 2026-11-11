@@ -191,7 +191,7 @@ function Calendar({ month, from, to, items, onOpen, onAdd }: {
           {days.map((d, idx) => {
             const nearBottom = idx >= days.length - 14; // Last two weeks open the menu upwards so it isn't cut off.
             const today = isSameDay(d, new Date());
-            const list = shown.filter((i) => isSameDay(new Date(i.scheduledAt), d));
+            const list = shown.filter((i) => isSameDay(new Date(i.scheduledAt), d)).sort((x, y) => x.scheduledAt.localeCompare(y.scheduledAt));
             const key = d.toISOString();
             return (
               <div key={key} className={clsx('group relative min-h-28 border-b border-r border-slate-100 p-1.5', !isSameMonth(d, month) && 'bg-slate-50/70', onAdd && 'hover:bg-indigo-50/30')}>
