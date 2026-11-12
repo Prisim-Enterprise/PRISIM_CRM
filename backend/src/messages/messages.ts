@@ -29,6 +29,9 @@ class VoiceParams {
   @Matches(TO, { message: 'to must be "everyone" or a user id' }) to: string;
   @Type(() => Number) @IsInt() @Min(1) @Max(300) durationSec: number;
 }
+class IncomingQuery {
+  @IsOptional() @IsDateString() after?: string;
+}
 class ReadDto {
   @Matches(TO) with: string;
 }
@@ -134,6 +137,22 @@ export class MessagesService {
     return { read: unread.length };
   }
 
+  /**
+   * Messages to this person (or to everyone) from others since `after`, for the popups.
+   * Without `after` it only returns the server's time, so popups start from now.
+   */
+  async incoming(u: AuthUser, after?: string) {
+    const now = new Date();
+    if (!after) return { now, items: [] };
+    const since = new Date(Math.max(new Date(after).getTime(), weekStart().getTime(), now.getTime() - 10 * 60_000));
+    const items = await this.prisma.message.findMany({
+      where: { createdAt: { gt: since, lte: now }, senderId: { not: u.id }, OR: [{ recipientId: u.id }, { recipientId: null }] },
+      orderBy: { createdAt: 'asc' }, take: 20,
+      select: { id: true, kind: true, body: true, durationSec: true, createdAt: true, recipientId: true, sender: person },
+    });
+    return { now, items: items.map(({ body, ...m }) => ({ ...m, preview: body ? body.slice(0, 140) : null, everyone: m.recipientId === null })) };
+  }
+
   async unread(u: AuthUser) {
     const count = await this.prisma.message.count({
       where: { createdAt: { gte: weekStart() }, senderId: { not: u.id }, reads: { none: { userId: u.id } }, OR: [{ recipientId: u.id }, { recipientId: null }] },
@@ -196,7 +215,7 @@ export class MessagesReset {
   run() { return this.messages.purge(true); }
 }
 
-@ApiTags('Mic')
+@ApiTags('Team chat')
 @ApiBearerAuth()
 @Controller('messages')
 export class MessagesController {
@@ -204,6 +223,7 @@ export class MessagesController {
 
   @Get('threads') threads(@CurrentUser() u: AuthUser) { return this.svc.threads(u); }
   @Get('unread') unread(@CurrentUser() u: AuthUser) { return this.svc.unread(u); }
+  @Get('incoming') incoming(@CurrentUser() u: AuthUser, @Query() q: IncomingQuery) { return this.svc.incoming(u, q.after); }
   @Get() list(@CurrentUser() u: AuthUser, @Query() q: ThreadQuery) { return this.svc.list(u, q); }
   @Post('read') read(@CurrentUser() u: AuthUser, @Body() dto: ReadDto) { return this.svc.markRead(u, dto.with); }
   @Post() text(@CurrentUser() u: AuthUser, @Body() dto: TextDto) { return this.svc.sendText(u, dto); }

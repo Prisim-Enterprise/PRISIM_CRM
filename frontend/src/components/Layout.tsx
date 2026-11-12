@@ -5,12 +5,13 @@ import clsx from 'clsx';
 import {
   LayoutDashboard, Users, CalendarClock, PhoneCall, KanbanSquare, MessageSquareText, Shield, Plug, ScrollText,
   Bell, LogOut, Menu, UserCog, X,
-  Building2, Clapperboard, TrendingUp, Mic,
+  Building2, Clapperboard, TrendingUp, MessagesSquare,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { ago } from '../lib/format';
 import { Avatar } from './ui';
+import { ChatPopups } from './ChatPopups';
 
 interface Notification { id: string; title: string; body: string | null; link: string | null; readAt: string | null; createdAt: string }
 
@@ -82,7 +83,7 @@ export default function Layout() {
     { to: '/clients', label: 'Clients', icon: Building2 },
     { to: '/media', label: 'Media', icon: Clapperboard },
     { to: '/seo', label: 'SEO', icon: TrendingUp },
-    { to: '/mic', label: 'Mic', icon: Mic, badge: micUnread.data?.count },
+    { to: '/chat', label: 'Team chat', icon: MessagesSquare, badge: micUnread.data?.count },
     { to: '/feedback', label: 'Feedback & Queries', icon: MessageSquareText },
   ];
   const admin = [
@@ -155,6 +156,7 @@ export default function Layout() {
         </header>
         <main className="scroll-thin min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6">
           <div className="mx-auto max-w-[1400px]"><Outlet /></div>
+          <ChatPopups />
         </main>
       </div>
     </div>

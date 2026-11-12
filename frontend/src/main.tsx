@@ -20,7 +20,7 @@ import Clients, { ClientDetail } from './pages/Clients';
 import FeedbackDetail from './pages/FeedbackDetail';
 import Media from './pages/Media';
 import Seo from './pages/Seo';
-import Mic from './pages/Mic';
+import TeamChat from './pages/TeamChat';
 import Profile from './pages/Profile';
 import AdminUsers from './pages/admin/Users';
 import AdminRoles from './pages/admin/Roles';
@@ -58,7 +58,8 @@ function App() {
         <Route path="clients/:id" element={<ClientDetail />} />
         <Route path="media" element={<Media />} />
         <Route path="seo" element={<Seo />} />
-        <Route path="mic" element={<Mic />} />
+        <Route path="chat" element={<TeamChat />} />
+        <Route path="mic" element={<Navigate to="/chat" replace />} />
         <Route path="feedback" element={<Feedback />} />
         <Route path="feedback/:id" element={<FeedbackDetail />} />
         <Route path="profile" element={<Profile />} />

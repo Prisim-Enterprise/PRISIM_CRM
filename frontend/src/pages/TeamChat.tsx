@@ -23,7 +23,7 @@ const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60))
 const preview = (s: Summary) => (s.mine ? 'You: ' : '') + (s.kind === 'VOICE' ? `Voice message (${clock(s.durationSec ?? 0)})` : s.body ?? '');
 const when = (d: string) => { const t = new Date(d); return isToday(t) ? format(t, 'h:mm a') : isYesterday(t) ? 'Yesterday' : format(t, 'EEE'); };
 
-export default function Mic() {
+export default function TeamChat() {
   const { me } = useAuth();
   const dir = useDirectory();
   const [params, setParams] = useSearchParams();
@@ -39,7 +39,7 @@ export default function Mic() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Mic" subtitle={<>Chat and voice messages with anyone, or with everyone at once.{resets && <> Everything is cleared every Monday at 12:00 AM · next clear {formatDistanceToNowStrict(resets, { addSuffix: true })}.</>}</>} />
+      <PageHeader title="Team chat" subtitle={<>Chat and voice messages with anyone, or with everyone at once.{resets && <> Everything is cleared every Monday at 12:00 AM · next clear {formatDistanceToNowStrict(resets, { addSuffix: true })}.</>}</>} />
       <Card className="flex h-[calc(100vh-13rem)] min-h-[460px] overflow-hidden">
         {/* Conversations */}
         <aside className={clsx('flex w-full shrink-0 flex-col border-r border-slate-200 md:w-80', open && 'hidden md:flex')}>
