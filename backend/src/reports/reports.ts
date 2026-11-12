@@ -7,6 +7,7 @@ import { AccessService } from '../common/access.service';
 import { AuthUser, CurrentUser } from '../common/current-user';
 import { addDays, localDateKey, localDayRange, parseLocalDate, startOfLocalDay } from '../common/time';
 import { CONNECTED_OUTCOMES } from '../leads/lead-status';
+import { MonthlyReportController, MonthlyReportService } from './monthly';
 
 class ReportQuery {
   @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/) from?: string;
@@ -283,5 +284,5 @@ export class ReportsController {
   @Get('employees') employees(@CurrentUser() u: AuthUser, @Query() q: ReportQuery) { return this.reports.employees(u, q); }
 }
 
-@Module({ providers: [ReportsService], controllers: [ReportsController] })
+@Module({ providers: [ReportsService, MonthlyReportService], controllers: [MonthlyReportController, ReportsController] })
 export class ReportsModule {}

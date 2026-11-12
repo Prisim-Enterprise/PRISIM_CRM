@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import {
   LayoutDashboard, Users, CalendarClock, PhoneCall, KanbanSquare, MessageSquareText, Shield, Plug, ScrollText,
   Bell, LogOut, Menu, UserCog, X,
-  Building2, Clapperboard, TrendingUp, MessagesSquare,
+  Building2, Clapperboard, TrendingUp, MessagesSquare, BarChart3,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -84,6 +84,7 @@ export default function Layout() {
     { to: '/media', label: 'Media', icon: Clapperboard },
     { to: '/seo', label: 'SEO', icon: TrendingUp },
     { to: '/chat', label: 'Team chat', icon: MessagesSquare, badge: micUnread.data?.count },
+    { to: '/reports', label: 'Reports', icon: BarChart3 },
     { to: '/feedback', label: 'Feedback & Queries', icon: MessageSquareText },
   ];
   const admin = [
@@ -132,7 +133,7 @@ export default function Layout() {
 
   return (
     <div className="flex h-full">
-      <aside className="hidden w-60 shrink-0 lg:block">{sidebar}</aside>
+      <aside className="hidden w-60 shrink-0 lg:block print:hidden">{sidebar}</aside>
       {mobileOpen && (
         <div className="fixed inset-0 z-40 flex lg:hidden">
           <div className="w-64">{sidebar}</div>
@@ -142,7 +143,7 @@ export default function Layout() {
         </div>
       )}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-surface px-4">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-surface px-4 print:hidden">
           <button className="rounded p-2 text-slate-500 hover:bg-slate-100 lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Menu"><Menu className="h-5 w-5" /></button>
           <div className="hidden text-sm text-slate-500 lg:block">
             {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}
