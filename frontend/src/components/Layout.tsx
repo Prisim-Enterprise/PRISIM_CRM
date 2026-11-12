@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import {
   LayoutDashboard, Users, CalendarClock, PhoneCall, KanbanSquare, MessageSquareText, Shield, Plug, ScrollText,
   Bell, LogOut, Menu, UserCog, X,
-  Building2, Clapperboard, TrendingUp,
+  Building2, Clapperboard, TrendingUp, Mic,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -71,6 +71,7 @@ function NotificationBell() {
 export default function Layout() {
   const { me, can, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const micUnread = useQuery({ queryKey: ['mic-unread'], queryFn: () => api.get<{ count: number }>('/messages/unread'), refetchInterval: 20_000 });
 
   const main = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -81,6 +82,7 @@ export default function Layout() {
     { to: '/clients', label: 'Clients', icon: Building2 },
     { to: '/media', label: 'Media', icon: Clapperboard },
     { to: '/seo', label: 'SEO', icon: TrendingUp },
+    { to: '/mic', label: 'Mic', icon: Mic, badge: micUnread.data?.count },
     { to: '/feedback', label: 'Feedback & Queries', icon: MessageSquareText },
   ];
   const admin = [
@@ -90,7 +92,7 @@ export default function Layout() {
     can('audit.view') && { to: '/admin/audit', label: 'Audit Log', icon: ScrollText },
   ].filter((x): x is { to: string; label: string; icon: typeof Plug; show?: boolean } => !!x && (x as { show?: boolean }).show !== false);
 
-  const link = (i: { to: string; label: string; icon: typeof Plug; end?: boolean }) => (
+  const link = (i: { to: string; label: string; icon: typeof Plug; end?: boolean; badge?: number }) => (
     <NavLink
       key={i.to} to={i.to} end={i.end} onClick={() => setMobileOpen(false)}
       className={({ isActive }) => clsx(
@@ -100,6 +102,7 @@ export default function Layout() {
     >
       <i.icon className="h-4.5 w-4.5 h-[18px] w-[18px]" />
       {i.label}
+      {!!i.badge && <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-indigo-600 px-1.5 text-[11px] font-semibold text-white" aria-label={`${i.badge} unread`}>{i.badge > 99 ? '99+' : i.badge}</span>}
     </NavLink>
   );
 
