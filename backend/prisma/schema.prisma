@@ -552,6 +552,7 @@ model FeedbackResponse {
 enum ClientStatus {
   ACTIVE
   ON_HOLD
+  SUSPENDED
   COMPLETED
 }
 

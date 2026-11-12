@@ -19,7 +19,7 @@ interface Client {
   notes: string | null; status: ClientStatus; createdBy: Person; createdAt: string; updatedAt: string;
   workCount?: number; openWorkCount?: number; lastActivityAt?: string;
 }
-type ClientStatus = 'ACTIVE' | 'ON_HOLD' | 'COMPLETED';
+type ClientStatus = 'ACTIVE' | 'ON_HOLD' | 'SUSPENDED' | 'COMPLETED';
 type WorkStatus = 'OPEN' | 'IN_PROGRESS' | 'SUBMITTED' | 'DONE';
 interface Work {
   id: string; title: string; description: string | null; priority: string; status: WorkStatus; dueAt: string | null; isOverdue: boolean;
@@ -36,6 +36,7 @@ interface WorkDetail extends Work {
 export const CLIENT_STATUS: Record<ClientStatus, { label: string; color: string }> = {
   ACTIVE: { label: 'Active', color: 'bg-green-100 text-green-800' },
   ON_HOLD: { label: 'On hold', color: 'bg-amber-100 text-amber-800' },
+  SUSPENDED: { label: 'Suspended', color: 'bg-rose-100 text-rose-800' },
   COMPLETED: { label: 'Completed', color: 'bg-slate-200 text-slate-700' },
 };
 export const WORK_STATUS: Record<WorkStatus, { label: string; color: string }> = {
