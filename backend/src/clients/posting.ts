@@ -1,6 +1,6 @@
 import {
   BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Injectable, Logger, Module, NotFoundException,
-  Param, ParseUUIDPipe, Patch, Post,
+  Param, ParseUUIDPipe, Patch, Post, Query,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -12,6 +12,7 @@ import { AuditService } from '../common/audit.service';
 import { AuthUser, CurrentUser } from '../common/current-user';
 import { NotificationsService } from '../notifications/notifications';
 import { localDateKey } from '../common/time';
+import { PostingSheetService } from './posting-sheet';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const trimOrNull = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() || null : value);
@@ -31,6 +32,13 @@ class UpdatePeriodDto {
   @IsOptional() @Matches(DATE) leadEnd?: string;
   @IsOptional() @ValidateIf((_, v) => v !== null) @Matches(DATE) shootDate?: string | null;
   @OptText(2000) notes?: string | null;
+}
+class SheetDto {
+  @IsString() @MaxLength(500) url: string;
+}
+class RangeQuery {
+  @Matches(DATE, { message: 'from must be a date' }) from: string;
+  @Matches(DATE, { message: 'to must be a date' }) to: string;
 }
 class SlotDto {
   @Matches(DATE, { message: 'date must be a date' }) date: string;
@@ -61,7 +69,26 @@ export const pending = (text: string | null, status: PostingStatus) => status ==
 export class PostingService {
   private log = new Logger('Posting');
   private lastRun = 0;
-  constructor(private prisma: PrismaService, private audit: AuditService, private notifications: NotificationsService) {}
+  constructor(
+    private prisma: PrismaService, private audit: AuditService, private notifications: NotificationsService, private sheet: PostingSheetService,
+  ) {}
+
+  /** Pulls the Google Sheet in if it's connected and the last sync is over a minute old. */
+  private async fresh() {
+    await this.sheet.sync().catch((e) => this.log.error(`Sheet sync failed: ${(e as Error).message}`));
+  }
+
+  /** Lead periods that come from the Google Sheet are edited there, not in the CRM. */
+  private async assertNotFromSheet(periodId: string) {
+    if ((await this.sheet.linkedPeriodIds()).has(periodId)) {
+      throw new BadRequestException('This calendar comes from the Google Sheet. Change it in the sheet; the CRM picks it up within a minute, or use Sync now.');
+    }
+  }
+
+  sheetStatus(u: AuthUser) { this.assertView(u); return this.sheet.status(); }
+  async syncSheet(u: AuthUser) { this.assertView(u); return this.sheet.sync(true); }
+  connectSheet(u: AuthUser, url: string) { this.assertEdit(u); return this.sheet.connect(u.id, url); }
+  disconnectSheet(u: AuthUser) { this.assertEdit(u); return this.sheet.disconnect(u.id); }
 
   private canEdit(u: AuthUser) { return u.permissions.has('clients.posting') || u.permissions.has('clients.manage'); }
   private canView(u: AuthUser) { return this.canEdit(u) || u.permissions.has('clients.view.all'); }
@@ -71,11 +98,17 @@ export class PostingService {
   async forClient(u: AuthUser, clientId: string) {
     this.assertView(u);
     if (!(await this.prisma.client.count({ where: { id: clientId } }))) throw new NotFoundException('Client not found');
+    await this.fresh();
+    const linked = await this.sheet.linkedPeriodIds();
+    const sheet = await this.sheet.status();
     const periods = await this.prisma.postingPeriod.findMany({
       where: { clientId }, orderBy: { leadStart: 'desc' },
       include: { slots: { orderBy: [{ date: 'asc' }, { createdAt: 'asc' }] }, createdBy: { select: { id: true, fullName: true } } },
     });
-    return { today: todayKey(), canEdit: this.canEdit(u), periods };
+    return {
+      today: todayKey(), canEdit: this.canEdit(u), sheetUrl: sheet.connected ? sheet.url : null, lastSyncAt: sheet.lastSyncAt,
+      periods: periods.map((p) => ({ ...p, fromSheet: linked.has(p.id), sheetTab: sheet.tabs.find((t) => t.periodId === p.id)?.name ?? null })),
+    };
   }
 
   async createPeriod(u: AuthUser, clientId: string, dto: PeriodDto) {
@@ -98,6 +131,7 @@ export class PostingService {
 
   async updatePeriod(u: AuthUser, id: string, dto: UpdatePeriodDto) {
     this.assertEdit(u);
+    await this.assertNotFromSheet(id);
     const before = await this.prisma.postingPeriod.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Lead period not found');
     const start = dto.leadStart ? day(dto.leadStart) : before.leadStart, end = dto.leadEnd ? day(dto.leadEnd) : before.leadEnd;
@@ -112,6 +146,7 @@ export class PostingService {
 
   async removePeriod(u: AuthUser, id: string) {
     this.assertEdit(u);
+    await this.assertNotFromSheet(id);
     const p = await this.prisma.postingPeriod.findUnique({ where: { id }, include: { _count: { select: { slots: true } } } });
     if (!p) throw new NotFoundException('Lead period not found');
     await this.prisma.postingPeriod.delete({ where: { id } });
@@ -121,6 +156,7 @@ export class PostingService {
 
   async addSlot(u: AuthUser, periodId: string, dto: SlotDto) {
     this.assertEdit(u);
+    await this.assertNotFromSheet(periodId);
     if (!(await this.prisma.postingPeriod.count({ where: { id: periodId } }))) throw new NotFoundException('Lead period not found');
     return this.prisma.postingSlot.create({
       data: { periodId, date: day(dto.date), video: dto.video, videoStatus: dto.videoStatus, poster: dto.poster, posterStatus: dto.posterStatus, leads: dto.leads },
@@ -131,6 +167,7 @@ export class PostingService {
     this.assertEdit(u);
     const before = await this.prisma.postingSlot.findUnique({ where: { id }, include: { period: { select: { clientId: true } } } });
     if (!before) throw new NotFoundException('Row not found');
+    await this.assertNotFromSheet(before.periodId);
     const s = await this.prisma.postingSlot.update({
       where: { id },
       data: {
@@ -147,9 +184,81 @@ export class PostingService {
 
   async removeSlot(u: AuthUser, id: string) {
     this.assertEdit(u);
-    if (!(await this.prisma.postingSlot.count({ where: { id } }))) throw new NotFoundException('Row not found');
+    const s = await this.prisma.postingSlot.findUnique({ where: { id }, select: { periodId: true } });
+    if (!s) throw new NotFoundException('Row not found');
+    await this.assertNotFromSheet(s.periodId);
     await this.prisma.postingSlot.delete({ where: { id } });
     return { deleted: true };
+  }
+
+  /**
+   * Everything from the posting calendars between two dates, for the Media calendar:
+   * lead starts and ends, shoot dates, and each reel/video and AI poster with its status.
+   */
+  async calendar(u: AuthUser, q: RangeQuery) {
+    this.assertView(u);
+    await this.fresh();
+    const from = day(q.from), to = day(q.to);
+    if (to < from || to.getTime() - from.getTime() > 62 * 86_400_000) throw new BadRequestException('Pick a range of up to about two months');
+    const client = { select: { id: true, name: true } };
+    const [periods, slots] = await Promise.all([
+      this.prisma.postingPeriod.findMany({
+        where: { OR: [{ leadStart: { gte: from, lte: to } }, { leadEnd: { gte: from, lte: to } }, { shootDate: { gte: from, lte: to } }] },
+        include: { client },
+      }),
+      this.prisma.postingSlot.findMany({ where: { date: { gte: from, lte: to } }, include: { period: { select: { client } } }, orderBy: { date: 'asc' } }),
+    ]);
+    const key = (d: Date) => d.toISOString().slice(0, 10);
+    const inRange = (d: Date | null) => !!d && d >= from && d <= to;
+    type Ev = { date: string; type: 'LEAD_START' | 'LEAD_END' | 'SHOOT' | 'VIDEO' | 'POSTER'; clientId: string; client: string; label: string | null; status: PostingStatus | null; slotId?: string };
+    const events: Ev[] = [];
+    for (const p of periods) {
+      const base = { clientId: p.client.id, client: p.client.name, label: null, status: null };
+      if (inRange(p.leadStart)) events.push({ ...base, date: key(p.leadStart), type: 'LEAD_START' });
+      if (inRange(p.leadEnd)) events.push({ ...base, date: key(p.leadEnd), type: 'LEAD_END' });
+      if (inRange(p.shootDate)) events.push({ ...base, date: key(p.shootDate!), type: 'SHOOT' });
+    }
+    for (const s of slots) {
+      const base = { date: key(s.date), clientId: s.period.client.id, client: s.period.client.name, slotId: s.id };
+      if (named(s.video) || s.videoStatus !== 'NONE') events.push({ ...base, type: 'VIDEO', label: named(s.video) ? s.video : null, status: s.videoStatus });
+      if (named(s.poster) || s.posterStatus !== 'NONE') events.push({ ...base, type: 'POSTER', label: named(s.poster) ? s.poster : null, status: s.posterStatus });
+    }
+    return { today: todayKey(), canEdit: this.canEdit(u), events };
+  }
+
+  /**
+   * One row per client that has a posting calendar: their current lead period (or the latest),
+   * shoot date, how many reels and posters are done, and what's due today or overdue.
+   */
+  async overview(u: AuthUser) {
+    this.assertView(u);
+    await this.fresh();
+    const today = day(todayKey());
+    const periods = await this.prisma.postingPeriod.findMany({
+      include: { client: { select: { id: true, name: true, status: true } }, slots: true },
+      orderBy: { leadStart: 'desc' },
+    });
+    const byClient = new Map<string, typeof periods>();
+    for (const p of periods) byClient.set(p.clientId, [...(byClient.get(p.clientId) ?? []), p]);
+    const rows = [...byClient.values()].map((list) => {
+      const p = list.find((x) => x.leadStart <= today && x.leadEnd >= today) ?? list[0];
+      const v = p.slots.filter((s) => named(s.video) || s.videoStatus !== 'NONE');
+      const po = p.slots.filter((s) => named(s.poster) || s.posterStatus !== 'NONE');
+      const open = (s: (typeof p.slots)[number]) => (pending(s.video, s.videoStatus) ? 1 : 0) + (pending(s.poster, s.posterStatus) ? 1 : 0);
+      const next = p.slots.filter((s) => s.date > today && open(s)).sort((a, b) => a.date.getTime() - b.date.getTime())[0];
+      return {
+        clientId: p.client.id, client: p.client.name, clientStatus: p.client.status, periods: list.length,
+        periodId: p.id, leadStart: p.leadStart, leadEnd: p.leadEnd, shootDate: p.shootDate,
+        current: p.leadStart <= today && p.leadEnd >= today,
+        videos: v.length, videosDone: v.filter((s) => s.videoStatus === 'DONE').length,
+        posters: po.length, postersDone: po.filter((s) => s.posterStatus === 'DONE').length,
+        dueToday: p.slots.filter((s) => s.date.getTime() === today.getTime()).reduce((a, s) => a + open(s), 0),
+        overdue: p.slots.filter((s) => s.date < today).reduce((a, s) => a + open(s), 0),
+        nextDate: next?.date ?? null,
+      };
+    });
+    rows.sort((a, b) => Number(b.current) - Number(a.current) || b.overdue - a.overdue || a.client.localeCompare(b.client));
+    return { today: todayKey(), canEdit: this.canEdit(u), rows };
   }
 
   /** Things scheduled for today, and anything from the last two weeks still not done. */
@@ -205,7 +314,7 @@ export class PostingService {
         type: 'posting.reminder',
         title: `${isToday ? 'Today' : 'Overdue since yesterday'}, ${s0.period.client.name}: ${what.join(', ')}`,
         body: isToday ? 'Scheduled for today and not done yet.' : 'Was scheduled for yesterday and is still not done.',
-        link: `/clients/${s0.period.client.id}?tab=posting`,
+        link: `/media?tab=posting&client=${s0.period.client.id}`,
       });
     }
     await this.prisma.postingSlot.updateMany({ where: { id: { in: due.map((s) => s.id) } }, data: { reminderSentOn: today } });
@@ -231,6 +340,12 @@ export class PostingController {
   @Get('clients/:id/posting') forClient(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.svc.forClient(u, id); }
   @Post('clients/:id/posting/periods') createPeriod(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: PeriodDto) { return this.svc.createPeriod(u, id, dto); }
   @Get('posting/due') due(@CurrentUser() u: AuthUser) { return this.svc.due(u); }
+  @Get('posting/overview') overview(@CurrentUser() u: AuthUser) { return this.svc.overview(u); }
+  @Get('posting/sheet') sheetStatus(@CurrentUser() u: AuthUser) { return this.svc.sheetStatus(u); }
+  @Post('posting/sheet') connectSheet(@CurrentUser() u: AuthUser, @Body() dto: SheetDto) { return this.svc.connectSheet(u, dto.url); }
+  @Post('posting/sheet/sync') syncSheet(@CurrentUser() u: AuthUser) { return this.svc.syncSheet(u); }
+  @Delete('posting/sheet') disconnectSheet(@CurrentUser() u: AuthUser) { return this.svc.disconnectSheet(u); }
+  @Get('posting/calendar') calendar(@CurrentUser() u: AuthUser, @Query() q: RangeQuery) { return this.svc.calendar(u, q); }
   @Patch('posting/periods/:id') updatePeriod(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdatePeriodDto) { return this.svc.updatePeriod(u, id, dto); }
   @Delete('posting/periods/:id') removePeriod(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.svc.removePeriod(u, id); }
   @Post('posting/periods/:id/rows') addSlot(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: SlotDto) { return this.svc.addSlot(u, id, dto); }
@@ -238,6 +353,6 @@ export class PostingController {
   @Delete('posting/rows/:id') removeSlot(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.svc.removeSlot(u, id); }
 }
 
-@Module({ providers: [PostingService, PostingReminders], controllers: [PostingController], exports: [PostingService] })
+@Module({ providers: [PostingService, PostingReminders, PostingSheetService], controllers: [PostingController], exports: [PostingService, PostingSheetService] })
 export class PostingModule {}
 

@@ -7,11 +7,12 @@ import { IntegrationsModule, LeadSyncService } from '../integrations/integration
 import { TaskReminders, TasksModule } from '../tasks/tasks';
 import { MessagesModule, MessagesService } from '../messages/messages';
 import { PostingModule, PostingService } from '../clients/posting';
+import { PostingSheetService } from '../clients/posting-sheet';
 
 /** On a long-running server @Cron does this work. Vercel functions sleep, so this endpoint is called instead. */
 @Controller('internal')
 export class JobsController {
-  constructor(private followUps: FollowUpReminders, private tasks: TaskReminders, private sync: LeadSyncService, private messages: MessagesService, private posting: PostingService) {}
+  constructor(private followUps: FollowUpReminders, private tasks: TaskReminders, private sync: LeadSyncService, private messages: MessagesService, private posting: PostingService, private postingSheet: PostingSheetService) {}
 
   @Public()
   @SkipThrottle()
@@ -23,7 +24,7 @@ export class JobsController {
     if (!b.length || a.length !== b.length || !timingSafeEqual(a, b)) throw new ForbiddenException();
     const now = new Date();
     const jobs = [this.followUps.run(), this.sync.scheduled()];
-    if (now.getUTCMinutes() % 10 === 0) jobs.push(this.tasks.overdue(), this.messages.purge().then(() => undefined), this.posting.remind().then(() => undefined));
+    if (now.getUTCMinutes() % 10 === 0) jobs.push(this.tasks.overdue(), this.messages.purge().then(() => undefined), this.postingSheet.sync().then(() => this.posting.remind()).then(() => undefined));
     if (now.getUTCHours() === 21 && now.getUTCMinutes() === 0) jobs.push(this.sync.reconcile()); // 02:30 IST
     await Promise.all(jobs);
     return { ok: true };
