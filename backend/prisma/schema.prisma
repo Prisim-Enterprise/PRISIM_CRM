@@ -31,41 +31,42 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  roles               UserRole[]
-  permissionOverrides UserPermission[]
-  ledTeams            Team[]               @relation("TeamLeader")
-  assignedLeads       Lead[]               @relation("LeadOwner")
-  assignments         LeadAssignment[]     @relation("AssignmentUser")
-  assignmentsMade     LeadAssignment[]     @relation("AssignmentActor")
-  statusChanges       LeadStatusHistory[]
-  notes               LeadNote[]
-  followUps           FollowUp[]           @relation("FollowUpOwner")
-  followUpsCreated    FollowUp[]           @relation("FollowUpCreator")
-  calls               CallLog[]
-  tasksAssigned       Task[]               @relation("TaskAssignee")
-  taskAssignments     TaskAssignee[]
-  messagesSent        Message[]            @relation("MessageSender")
-  messagesReceived    Message[]            @relation("MessageRecipient")
-  messageReads        MessageRead[]
-  tasksCreated        Task[]               @relation("TaskCreator")
-  taskComments        TaskComment[]
-  taskActivities      TaskActivity[]
-  feedbackSubmitted   Feedback[]           @relation("FeedbackSubmitter")
-  feedbackAssigned    Feedback[]           @relation("FeedbackAssignee")
-  feedbackResponses   FeedbackResponse[]
-  attachments         Attachment[]
-  notifications       Notification[]
-  auditLogs           AuditLog[]
-  clientsCreated      Client[]             @relation("ClientCreator")
-  clientWorkCreated   ClientWork[]         @relation("ClientWorkCreator")
-  clientWorkAssigned  ClientWorkAssignee[]
-  clientWorkUpdates   ClientWorkUpdate[]
-  mediaAssigned       MediaItem[]          @relation("MediaAssignee")
-  mediaCreated        MediaItem[]          @relation("MediaCreator")
-  mediaExpenses       MediaExpense[]
-  seoAccountsCreated  SeoAccount[]
-  seoAssignments      SeoAssignee[]
-  seoUpdates          SeoUpdate[]
+  roles                 UserRole[]
+  permissionOverrides   UserPermission[]
+  ledTeams              Team[]               @relation("TeamLeader")
+  assignedLeads         Lead[]               @relation("LeadOwner")
+  assignments           LeadAssignment[]     @relation("AssignmentUser")
+  assignmentsMade       LeadAssignment[]     @relation("AssignmentActor")
+  statusChanges         LeadStatusHistory[]
+  notes                 LeadNote[]
+  followUps             FollowUp[]           @relation("FollowUpOwner")
+  followUpsCreated      FollowUp[]           @relation("FollowUpCreator")
+  calls                 CallLog[]
+  tasksAssigned         Task[]               @relation("TaskAssignee")
+  taskAssignments       TaskAssignee[]
+  messagesSent          Message[]            @relation("MessageSender")
+  messagesReceived      Message[]            @relation("MessageRecipient")
+  messageReads          MessageRead[]
+  postingPeriodsCreated PostingPeriod[]
+  tasksCreated          Task[]               @relation("TaskCreator")
+  taskComments          TaskComment[]
+  taskActivities        TaskActivity[]
+  feedbackSubmitted     Feedback[]           @relation("FeedbackSubmitter")
+  feedbackAssigned      Feedback[]           @relation("FeedbackAssignee")
+  feedbackResponses     FeedbackResponse[]
+  attachments           Attachment[]
+  notifications         Notification[]
+  auditLogs             AuditLog[]
+  clientsCreated        Client[]             @relation("ClientCreator")
+  clientWorkCreated     ClientWork[]         @relation("ClientWorkCreator")
+  clientWorkAssigned    ClientWorkAssignee[]
+  clientWorkUpdates     ClientWorkUpdate[]
+  mediaAssigned         MediaItem[]          @relation("MediaAssignee")
+  mediaCreated          MediaItem[]          @relation("MediaCreator")
+  mediaExpenses         MediaExpense[]
+  seoAccountsCreated    SeoAccount[]
+  seoAssignments        SeoAssignee[]
+  seoUpdates            SeoUpdate[]
 
   @@index([teamId])
   @@map("users")
@@ -564,21 +565,22 @@ enum ClientWorkStatus {
 }
 
 model Client {
-  id          String       @id @default(uuid()) @db.Uuid
-  name        String
-  company     String?
-  contactName String?
-  email       String?
-  phone       String?
-  notes       String?
-  status      ClientStatus @default(ACTIVE)
-  createdById String       @db.Uuid
-  createdBy   User         @relation("ClientCreator", fields: [createdById], references: [id])
-  works       ClientWork[]
-  mediaItems  MediaItem[]
-  seoAccounts SeoAccount[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id             String          @id @default(uuid()) @db.Uuid
+  name           String
+  company        String?
+  contactName    String?
+  email          String?
+  phone          String?
+  notes          String?
+  status         ClientStatus    @default(ACTIVE)
+  createdById    String          @db.Uuid
+  createdBy      User            @relation("ClientCreator", fields: [createdById], references: [id])
+  works          ClientWork[]
+  mediaItems     MediaItem[]
+  postingPeriods PostingPeriod[]
+  seoAccounts    SeoAccount[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
   @@index([status])
   @@map("clients")
@@ -926,4 +928,52 @@ model MessageRead {
   @@id([messageId, userId])
   @@index([userId])
   @@map("message_reads")
+}
+
+// ───── Client posting calendar: lead periods, and the reel / AI poster planned for each date ─────
+
+enum PostingStatus {
+  NONE
+  NOT_YET
+  DONE
+}
+
+/// One lead period for a client (e.g. 22 Sep to 22 Oct), with its shoot date.
+model PostingPeriod {
+  id          String        @id @default(uuid()) @db.Uuid
+  clientId    String        @db.Uuid
+  client      Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  leadStart   DateTime      @db.Date
+  leadEnd     DateTime      @db.Date
+  shootDate   DateTime?     @db.Date
+  notes       String?
+  createdById String        @db.Uuid
+  createdBy   User          @relation(fields: [createdById], references: [id])
+  slots       PostingSlot[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([clientId, leadStart])
+  @@map("posting_periods")
+}
+
+/// A scheduled date: the reel or video and the AI poster planned for it, each with its own status.
+model PostingSlot {
+  id             String        @id @default(uuid()) @db.Uuid
+  periodId       String        @db.Uuid
+  period         PostingPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  date           DateTime      @db.Date
+  video          String?
+  videoStatus    PostingStatus @default(NONE)
+  poster         String?
+  posterStatus   PostingStatus @default(NONE)
+  leads          String?
+  /// Last day a reminder went out for this date, so each day gets at most one.
+  reminderSentOn DateTime?     @db.Date
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([periodId, date])
+  @@index([date])
+  @@map("posting_slots")
 }

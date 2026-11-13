@@ -6,6 +6,7 @@ import {
   ArrowLeft, Briefcase, Building2, CalendarClock, FileText, Mail, MessageSquare, Paperclip, Pencil, Phone, Plus, Send, Trash2, User as UserIcon,
 } from 'lucide-react';
 import { api, errMsg } from '../lib/api';
+import PostingCalendar, { PostingDue } from '../components/PostingCalendar';
 import { useAuth } from '../lib/auth';
 import { useDirectory } from '../lib/hooks';
 import { PRIORITY, ago, fmtBytes, fmtDate, fmtDateTime, fmtPhone } from '../lib/format';
@@ -81,6 +82,7 @@ export default function Clients() {
         subtitle={manage ? 'Add clients and post their work to anyone in the team' : seesAll ? 'Every client, the work posted for them and its progress' : 'Client work posted to you'}
         actions={manage && <Button onClick={() => setEditing(true)}><Plus className="h-4 w-4" />Add client</Button>}
       />
+      {can('clients.posting', 'clients.manage', 'clients.view.all') && <PostingDue />}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Tabs value={tab} onChange={(v) => setParams(v === 'clients' ? {} : { tab: v }, { replace: true })}
           tabs={[{ value: 'clients', label: 'Clients' }, { value: 'work', label: seesAll ? 'All work' : 'My work' }]} />
@@ -182,6 +184,9 @@ export function ClientDetail() {
   const [posting, setPosting] = useState(false);
   const q = useQuery({ queryKey: ['client', id], queryFn: () => api.get<Client & { works: Work[]; permissions: { canManage: boolean } }>(`/clients/${id}`) });
   const workId = params.get('work');
+  const { can } = useAuth();
+  const showPosting = can('clients.posting', 'clients.manage', 'clients.view.all');
+  const section = showPosting && params.get('tab') === 'posting' ? 'posting' : 'work';
 
   if (q.isLoading) return <Spinner />;
   if (q.error || !q.data) return <ErrorBox error={q.error ?? new Error('Client not found')} />;
@@ -209,6 +214,11 @@ export function ClientDetail() {
           </div>
         )}
       />
+      {showPosting && (
+        <Tabs value={section} onChange={(v) => setParams(v === 'posting' ? { tab: 'posting' } : {}, { replace: true })}
+          tabs={[{ value: 'work', label: 'Work', count: c.works.length }, { value: 'posting', label: 'Posting calendar' }]} />
+      )}
+      {section === 'posting' ? <PostingCalendar clientId={id} /> : (
       <div className="grid gap-5 lg:grid-cols-3">
         <Card title="Client details" className="lg:order-2">
           <dl className="space-y-2.5 p-4 text-sm">
@@ -226,6 +236,7 @@ export function ClientDetail() {
           {!!done.length && <Card title={`Done (${done.length})`}><WorkList items={done} /></Card>}
         </div>
       </div>
+      )}
       {editing && <ClientModal client={c} onClose={() => setEditing(false)} />}
       {posting && <PostWorkModal clientId={id} clientName={c.name} onClose={() => setPosting(false)} />}
       {workId && <WorkDrawer id={workId} onClose={() => setParams({}, { replace: true })} />}
