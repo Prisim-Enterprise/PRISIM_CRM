@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Megaphone, Mic, X } from 'lucide-react';
 import { api } from '../lib/api';
+import { notifyDesktop } from '../lib/desktopNotify';
 import { Avatar } from './ui';
 
 interface Incoming {
@@ -38,6 +39,13 @@ export function ChatPopups() {
           qc.invalidateQueries({ queryKey: ['mic-threads'] });
         }
         const show = r.items.filter((m) => (m.everyone ? 'everyone' : m.sender.id) !== here.current);
+        for (const m of show.slice(-3)) {
+          const chat = m.everyone ? 'everyone' : m.sender.id;
+          notifyDesktop(m.everyone ? `${m.sender.fullName} (to everyone)` : m.sender.fullName, {
+            body: m.kind === 'VOICE' ? `Voice message (${clock(m.durationSec ?? 0)})` : m.preview ?? '',
+            tag: `chat-${m.id}`, onClick: () => nav(`/chat?with=${chat}`),
+          });
+        }
         if (show.length > 3) {
           toast(`${show.length} new team chat messages`, { id: 'chat-many', action: { label: 'Open', onClick: () => nav('/chat') }, duration: 8000 });
         } else {

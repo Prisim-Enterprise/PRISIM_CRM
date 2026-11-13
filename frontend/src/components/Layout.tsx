@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
   LayoutDashboard, Users, CalendarClock, PhoneCall, KanbanSquare, MessageSquareText, Shield, Plug, ScrollText,
-  Bell, LogOut, Menu, UserCog, X,
+  Bell, BellRing, LogOut, Menu, UserCog, X,
   Building2, Clapperboard, TrendingUp, MessagesSquare, BarChart3,
 } from 'lucide-react';
 import { api } from '../lib/api';
@@ -12,6 +12,7 @@ import { useAuth } from '../lib/auth';
 import { ago } from '../lib/format';
 import { Avatar } from './ui';
 import { ChatPopups } from './ChatPopups';
+import { desktopPermission, notifyDesktop, requestDesktop } from '../lib/desktopNotify';
 
 interface Notification { id: string; title: string; body: string | null; link: string | null; readAt: string | null; createdAt: string }
 
@@ -24,8 +25,21 @@ function NotificationBell() {
     queryKey: ['notifications'],
     queryFn: () => api.get<{ items: Notification[]; unreadCount: number }>('/notifications'),
     refetchInterval: 30_000,
+    // Keep checking while the tab is hidden or minimised, so alerts reach the computer's notifications.
+    refetchIntervalInBackground: true,
   });
   const readAll = useMutation({ mutationFn: () => api.post('/notifications/read-all'), onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }) });
+  // Alerts already on screen when the CRM opened don't pop up again.
+  const seen = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (!data) return;
+    if (!seen.current) { seen.current = new Set(data.items.map((n) => n.id)); return; }
+    for (const n of data.items) {
+      if (seen.current.has(n.id)) continue;
+      seen.current.add(n.id);
+      if (!n.readAt) notifyDesktop(n.title, { body: n.body ?? undefined, tag: `alert-${n.id}`, onClick: () => openItem(n) });
+    }
+  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
     document.addEventListener('mousedown', h);
@@ -69,10 +83,29 @@ function NotificationBell() {
   );
 }
 
+/** Offers to turn on computer notifications until the person decides. */
+function DesktopAlertsButton() {
+  const [perm, setPerm] = useState(desktopPermission());
+  if (perm !== 'default') return null;
+  return (
+    <button
+      onClick={async () => {
+        const p = await requestDesktop();
+        setPerm(p);
+        if (p === 'granted') new Notification('Desktop alerts are on', { body: 'New messages and CRM alerts will show here while the CRM is open.', icon: '/favicon-192.png' });
+      }}
+      className="hidden items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 sm:flex"
+      title="Show new messages and alerts as computer notifications"
+    >
+      <BellRing className="h-3.5 w-3.5" />Enable desktop alerts
+    </button>
+  );
+}
+
 export default function Layout() {
   const { me, can, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const micUnread = useQuery({ queryKey: ['mic-unread'], queryFn: () => api.get<{ count: number }>('/messages/unread'), refetchInterval: 20_000 });
+  const micUnread = useQuery({ queryKey: ['mic-unread'], queryFn: () => api.get<{ count: number }>('/messages/unread'), refetchInterval: 20_000, refetchIntervalInBackground: true });
 
   const main = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -149,6 +182,7 @@ export default function Layout() {
             {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}
           </div>
           <div className="flex items-center gap-1">
+            <DesktopAlertsButton />
             <NotificationBell />
             <button onClick={logout} className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm text-slate-500 hover:bg-slate-100" title="Sign out">
               <LogOut className="h-4 w-4" /> <span className="hidden sm:inline">Sign out</span>
