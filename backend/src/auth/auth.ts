@@ -23,18 +23,20 @@ export class AuthController {
 
   @Get('me')
   async me(@CurrentUser() u: AuthUser) {
-    const { lastLoginAt, ...profile } = await this.prisma.user.findUniqueOrThrow({
+    const { lastLoginAt, teamMemberships, ...profile } = await this.prisma.user.findUniqueOrThrow({
       where: { id: u.id },
       select: {
         id: true, fullName: true, email: true, phone: true, timezone: true, teamId: true, lastLoginAt: true,
         team: { select: { id: true, name: true } },
+        teamMemberships: { select: { team: { select: { id: true, name: true } } }, orderBy: { createdAt: 'asc' } },
       },
     });
     if (!lastLoginAt || Date.now() - lastLoginAt.getTime() > LOGIN_GAP_MS) {
       await this.prisma.user.update({ where: { id: u.id }, data: { lastLoginAt: new Date() } });
       await this.audit.record({ actorId: u.id, action: 'auth.login', entityType: 'user', entityId: u.id });
     }
-    return { ...profile, roles: [...u.roleKeys].sort(), permissions: [...u.permissions].sort(), teamIds: u.teamIds };
+    const teams = teamMemberships.length ? teamMemberships.map((m) => m.team) : profile.team ? [profile.team] : [];
+    return { ...profile, teams, roles: [...u.roleKeys].sort(), permissions: [...u.permissions].sort(), teamIds: u.teamIds };
   }
 
   @Patch('me')

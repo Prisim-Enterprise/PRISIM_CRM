@@ -119,7 +119,7 @@ export class LeadsService {
     if (q.owner === 'unassigned') and.push({ assignedUserId: null });
     else if (q.owner === 'me') and.push({ assignedUserId: user.id });
     else if (q.owner) and.push({ assignedUserId: q.owner });
-    if (q.teamId) and.push({ assignedUser: { teamId: q.teamId } });
+    if (q.teamId) and.push({ assignedUser: { OR: [{ teamId: q.teamId }, { teamMemberships: { some: { teamId: q.teamId } } }] } });
     if (q.campaign) and.push({ campaignName: q.campaign });
     if (q.source) and.push({ source: { key: q.source } });
     if (q.from) and.push({ createdAt: { gte: parseLocalDate(q.from) } });

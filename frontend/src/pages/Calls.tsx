@@ -4,7 +4,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { PhoneIncoming, PhoneOutgoing, Search } from 'lucide-react';
 import { api, Paged } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { useDirectory } from '../lib/hooks';
+import { sharesTeam, useDirectory } from '../lib/hooks';
 import { CALL_OUTCOMES, CALL_STATUS, fmtDateTime, fmtDuration, fmtPhone } from '../lib/format';
 import { Avatar, Badge, Card, Empty, Input, PageHeader, Pagination, Select, Spinner, Table, Td, Th } from '../components/ui';
 import { RecordingPlayer } from '../components/Recording';
@@ -40,7 +40,7 @@ export default function Calls() {
             <Select value={f.userId} onChange={set('userId')} className="w-44">
               <option value="">All employees</option>
               <option value="me">My calls</option>
-              {dir.data?.filter((u) => can('calls.view.all') || me?.teamIds.includes(u.teamId ?? '')).map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+              {dir.data?.filter((u) => can('calls.view.all') || sharesTeam(u, me?.teamIds)).map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
             </Select>
           )}
           <Select value={f.outcome} onChange={set('outcome')} className="w-44">

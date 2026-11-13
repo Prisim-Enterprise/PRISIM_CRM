@@ -39,7 +39,9 @@ export class ReportsService {
     const scope = this.access.scope(user, 'reports.view');
     let ids = await this.access.userIdsInScope(user, 'reports.view');
     if (q.teamId) {
-      const members = (await this.prisma.user.findMany({ where: { teamId: q.teamId }, select: { id: true } })).map((m) => m.id);
+      const members = (await this.prisma.user.findMany({
+        where: { OR: [{ teamId: q.teamId }, { teamMemberships: { some: { teamId: q.teamId } } }] }, select: { id: true },
+      })).map((m) => m.id);
       ids = ids === null ? members : ids.filter((id) => members.includes(id));
     }
     if (q.userId) ids = ids === null || ids.includes(q.userId) ? [q.userId] : [];
@@ -239,7 +241,7 @@ export class ReportsService {
     const inRange = { gte: from, lt: to };
     const users = await this.prisma.user.findMany({
       where: { isActive: true, ...(ids === null ? {} : { id: { in: ids } }) },
-      select: { id: true, fullName: true, team: { select: { name: true } } },
+      select: { id: true, fullName: true, team: { select: { name: true } }, teamMemberships: { select: { team: { select: { name: true } } }, orderBy: { createdAt: 'asc' } } },
       orderBy: { fullName: 'asc' },
     });
     const uids = users.map((u) => u.id);
@@ -261,7 +263,8 @@ export class ReportsService {
       const leadsAssigned = pick(assignedInRange, 'userId', u.id);
       const conv = pick(converted, 'actorId', u.id);
       return {
-        userId: u.id, name: u.fullName, team: u.team?.name ?? null,
+        userId: u.id, name: u.fullName,
+        team: (u.teamMemberships.length ? u.teamMemberships.map((m) => m.team.name).join(', ') : u.team?.name) ?? null,
         leadsAssigned, openLeads: pick(openLeads, 'assignedUserId', u.id),
         callsMade, connectedCalls: pick(connected, 'userId', u.id),
         talkTimeSeconds: talk.find((t) => t.userId === u.id)?._sum.durationSeconds ?? 0,

@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, errMsg } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { useDirectory } from '../lib/hooks';
+import { sharesTeam, useDirectory } from '../lib/hooks';
 import { CALL_OUTCOMES, FOLLOW_UP_TYPES, LEAD_STATUS, toLocalInput } from '../lib/format';
 import { Button, ErrorBox, Field, Input, Modal, Select, Textarea } from './ui';
 
@@ -19,7 +19,7 @@ function useAssignableUsers() {
   const { me, can } = useAuth();
   const dir = useDirectory();
   return useMemo(
-    () => (dir.data ?? []).filter((u) => can('leads.assign.all') || (u.teamId && me?.teamIds.includes(u.teamId)) || u.id === me?.id),
+    () => (dir.data ?? []).filter((u) => can('leads.assign.all') || sharesTeam(u, me?.teamIds) || u.id === me?.id),
     [dir.data, me, can],
   );
 }

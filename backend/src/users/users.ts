@@ -17,7 +17,9 @@ class CreateUserDto {
   @IsString() @MinLength(2) fullName: string;
   @IsEmail() email: string;
   @IsOptional() @IsString() phone?: string;
+  /** Older single-team form; teamIds takes priority. */
   @IsOptional() @IsUUID() teamId?: string | null;
+  @IsOptional() @IsArray() @ArrayUnique() @IsUUID('all', { each: true }) teamIds?: string[];
   @IsArray() @IsString({ each: true }) roleKeys: string[];
 }
 
@@ -26,6 +28,7 @@ class UpdateUserDto {
   @IsOptional() @IsEmail() email?: string;
   @IsOptional() @IsString() phone?: string | null;
   @IsOptional() @IsUUID() teamId?: string | null;
+  @IsOptional() @IsArray() @ArrayUnique() @IsUUID('all', { each: true }) teamIds?: string[];
   @IsOptional() @IsBoolean() isActive?: boolean;
   @IsOptional() @IsArray() @IsString({ each: true }) roleKeys?: string[];
   @IsOptional() @IsString() timezone?: string;
@@ -63,6 +66,7 @@ class RolePermissionsDto {
 const userSelect = {
   id: true, fullName: true, email: true, phone: true, isActive: true, timezone: true, lastLoginAt: true, createdAt: true,
   teamId: true, team: { select: { id: true, name: true } },
+  teamMemberships: { select: { team: { select: { id: true, name: true } } }, orderBy: { createdAt: 'asc' } },
   roles: { select: { role: { select: { key: true, name: true } } } },
   _count: { select: { permissionOverrides: true } },
 } satisfies Prisma.UserSelect;
@@ -114,8 +118,15 @@ export class UsersService {
     if (!others) throw new BadRequestException('This is the last active Super Admin. Make someone else a Super Admin first.');
   }
 
-  private async assertTeamExists(teamId: string | null | undefined) {
-    if (teamId && !(await this.prisma.team.findUnique({ where: { id: teamId }, select: { id: true } }))) {
+  /** The team list from a request: teamIds, or the older single teamId. Undefined means unchanged. */
+  private wantedTeams(dto: { teamId?: string | null; teamIds?: string[] }) {
+    if (dto.teamIds !== undefined) return [...new Set(dto.teamIds)];
+    if (dto.teamId !== undefined) return dto.teamId ? [dto.teamId] : [];
+    return undefined;
+  }
+
+  private async assertTeamsExist(teamIds: string[] | undefined) {
+    if (teamIds?.length && (await this.prisma.team.count({ where: { id: { in: teamIds } } })) !== teamIds.length) {
       throw new BadRequestException('Team not found');
     }
   }
@@ -126,10 +137,12 @@ export class UsersService {
     const roles = await this.rolesFor(dto.roleKeys, actor);
     const phone = dto.phone ? normalizePhone(dto.phone) : null;
     if (dto.phone && !phone) throw new BadRequestException('Phone number is not valid');
-    await this.assertTeamExists(dto.teamId);
+    const teams = this.wantedTeams(dto) ?? [];
+    await this.assertTeamsExist(teams);
     const user = await this.prisma.user.create({
       data: {
-        fullName: dto.fullName.trim(), email, phone, teamId: dto.teamId ?? null,
+        fullName: dto.fullName.trim(), email, phone, teamId: teams[0] ?? null,
+        teamMemberships: { create: teams.map((teamId, i) => ({ teamId, createdAt: new Date(Date.now() + i) })) },
         roles: { create: roles.map((r) => ({ roleId: r.id })) },
       },
       select: userSelect,
@@ -201,6 +214,7 @@ export class UsersService {
         // Frees the email so the same person can be added again later.
         data: { deletedAt: new Date(), isActive: false, email: `deleted-${id}@prisim.internal`, phone: null, teamId: null, authUserId: null },
       });
+      await tx.teamMember.deleteMany({ where: { userId: id } });
       return { leads: leads.length, followUps: followUps.count, tasks: tasks.count };
     });
     let signInRemoved = true;
@@ -230,7 +244,8 @@ export class UsersService {
     const isSuper = target.isActive && target.roles.some((r) => r.role.key === 'super_admin');
     const losesSuper = dto.isActive === false || (dto.roleKeys !== undefined && !dto.roleKeys.includes('super_admin'));
     if (isSuper && losesSuper) await this.assertNotLastSuperAdmin(id);
-    await this.assertTeamExists(dto.teamId);
+    const teams = this.wantedTeams(dto);
+    await this.assertTeamsExist(teams);
     const before = await this.prisma.user.findUniqueOrThrow({ where: { id }, select: userSelect });
     const data: Prisma.UserUpdateInput = {};
     if (dto.fullName !== undefined) data.fullName = dto.fullName.trim();
@@ -241,7 +256,7 @@ export class UsersService {
     }
     if (dto.timezone !== undefined) data.timezone = dto.timezone;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
-    if (dto.teamId !== undefined) data.team = dto.teamId ? { connect: { id: dto.teamId } } : { disconnect: true };
+    if (teams) data.team = teams[0] ? { connect: { id: teams[0] } } : { disconnect: true };
     if (dto.phone !== undefined) {
       const phone = dto.phone ? normalizePhone(dto.phone) : null;
       if (dto.phone && !phone) throw new BadRequestException('Phone number is not valid');
@@ -252,6 +267,14 @@ export class UsersService {
         const roles = await this.rolesFor(dto.roleKeys, actor);
         await tx.userRole.deleteMany({ where: { userId: id } });
         await tx.userRole.createMany({ data: roles.map((r) => ({ userId: id, roleId: r.id })) });
+      }
+      if (teams) {
+        await tx.teamMember.deleteMany({ where: { userId: id, teamId: { notIn: teams } } });
+        // Kept in the chosen order, so the first team stays the main one.
+        for (const [i, teamId] of teams.entries()) {
+          const createdAt = new Date(Date.now() + i);
+          await tx.teamMember.upsert({ where: { teamId_userId: { teamId, userId: id } }, update: { createdAt }, create: { teamId, userId: id, createdAt } });
+        }
       }
       return tx.user.update({ where: { id }, data, select: userSelect });
     });
@@ -271,9 +294,11 @@ export class UsersController {
   directory() {
     return this.prisma.user.findMany({
       where: { isActive: true, deletedAt: null },
-      select: { id: true, fullName: true, teamId: true, roles: { select: { role: { select: { key: true } } } } },
+      select: { id: true, fullName: true, teamId: true, teamMemberships: { select: { teamId: true } }, roles: { select: { role: { select: { key: true } } } } },
       orderBy: { fullName: 'asc' },
-    });
+    }).then((users) => users.map(({ teamMemberships, ...u }) => ({
+      ...u, teamIds: teamMemberships.length ? teamMemberships.map((m) => m.teamId) : u.teamId ? [u.teamId] : [],
+    })));
   }
 
   @Get()
@@ -283,7 +308,7 @@ export class UsersController {
       where: {
         email: { not: 'system@prisim.internal' },
         deletedAt: null,
-        ...(teamId ? { teamId } : {}),
+        ...(teamId ? { OR: [{ teamId }, { teamMemberships: { some: { teamId } } }] } : {}),
         ...(search ? { OR: [{ fullName: { contains: search, mode: 'insensitive' } }, { email: { contains: search, mode: 'insensitive' } }] } : {}),
       },
       select: userSelect,
@@ -393,11 +418,12 @@ export class TeamsController {
   }
 
   @Get()
-  list() {
-    return this.prisma.team.findMany({
-      include: { leader: { select: { id: true, fullName: true } }, _count: { select: { members: true } } },
+  async list() {
+    const teams = await this.prisma.team.findMany({
+      include: { leader: { select: { id: true, fullName: true } }, _count: { select: { memberships: { where: { user: { deletedAt: null } } } } } },
       orderBy: { name: 'asc' },
     });
+    return teams.map(({ _count, ...t }) => ({ ...t, _count: { members: _count.memberships } }));
   }
 
   @Post()
@@ -429,11 +455,16 @@ export class TeamsController {
   @RequireAny('teams.manage')
   async remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() actor: AuthUser) {
     await this.existing(id);
-    await this.prisma.$transaction([
-      this.prisma.user.updateMany({ where: { teamId: id }, data: { teamId: null } }),
-      this.prisma.task.updateMany({ where: { teamId: id }, data: { teamId: null } }),
-      this.prisma.team.delete({ where: { id } }),
-    ]);
+    await this.prisma.$transaction(async (tx) => {
+      // People whose main team this was move to their next team, if they have one.
+      const affected = await tx.user.findMany({
+        where: { teamId: id },
+        select: { id: true, teamMemberships: { where: { teamId: { not: id } }, select: { teamId: true }, orderBy: { createdAt: 'asc' }, take: 1 } },
+      });
+      for (const u of affected) await tx.user.update({ where: { id: u.id }, data: { teamId: u.teamMemberships[0]?.teamId ?? null } });
+      await tx.task.updateMany({ where: { teamId: id }, data: { teamId: null } });
+      await tx.team.delete({ where: { id } }); // Memberships go with it.
+    });
     await this.audit.record({ actorId: actor.id, action: 'team.deleted', entityType: 'team', entityId: id });
     return { ok: true };
   }

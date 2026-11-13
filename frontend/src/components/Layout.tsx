@@ -157,7 +157,7 @@ export default function Layout() {
           <Avatar name={me?.fullName} />
           <div className="min-w-0">
             <p className="truncate text-sm font-medium text-slate-900">{me?.fullName}</p>
-            <p className="truncate text-xs text-slate-600">{me?.team?.name ?? me?.email}</p>
+            <p className="truncate text-xs text-slate-600">{me?.teams?.length ? me.teams.map((t) => t.name).join(', ') : me?.email}</p>
           </div>
         </NavLink>
       </div>

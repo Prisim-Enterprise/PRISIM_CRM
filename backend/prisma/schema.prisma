@@ -14,22 +14,24 @@ datasource db {
 // ───────────────────────── Users, teams, roles ─────────────────────────
 
 model User {
-  id           String    @id @default(uuid()) @db.Uuid
-  fullName     String
-  email        String    @unique
-  phone        String? // agent phone in E.164, used for click-to-call
+  id              String       @id @default(uuid()) @db.Uuid
+  fullName        String
+  email           String       @unique
+  phone           String? // agent phone in E.164, used for click-to-call
   // Sign-in is handled by Supabase Auth. Filled in the first time this person signs in.
-  authUserId   String?   @unique
-  passwordHash String? // legacy, unused
-  isActive     Boolean   @default(true)
-  timezone     String    @default("Asia/Kolkata")
-  teamId       String?   @db.Uuid
-  team         Team?     @relation("TeamMembers", fields: [teamId], references: [id])
-  lastLoginAt  DateTime?
+  authUserId      String?      @unique
+  passwordHash    String? // legacy, unused
+  isActive        Boolean      @default(true)
+  timezone        String       @default("Asia/Kolkata")
+  /// Main team, shown where only one fits. teamMemberships holds every team, this one included.
+  teamId          String?      @db.Uuid
+  team            Team?        @relation("TeamMembers", fields: [teamId], references: [id])
+  teamMemberships TeamMember[]
+  lastLoginAt     DateTime?
   // Deleted users stay as rows so past calls, leads and audit entries keep their name.
-  deletedAt    DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  deletedAt       DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   roles                 UserRole[]
   permissionOverrides   UserPermission[]
@@ -73,16 +75,30 @@ model User {
 }
 
 model Team {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String   @unique
-  leaderId  String?  @db.Uuid
-  leader    User?    @relation("TeamLeader", fields: [leaderId], references: [id])
-  members   User[]   @relation("TeamMembers")
-  tasks     Task[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String       @id @default(uuid()) @db.Uuid
+  name        String       @unique
+  leaderId    String?      @db.Uuid
+  leader      User?        @relation("TeamLeader", fields: [leaderId], references: [id])
+  members     User[]       @relation("TeamMembers")
+  memberships TeamMember[]
+  tasks       Task[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
   @@map("teams")
+}
+
+/// A person's membership of a team. People can be in several teams.
+model TeamMember {
+  teamId    String   @db.Uuid
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([teamId, userId])
+  @@index([userId])
+  @@map("team_members")
 }
 
 model Role {

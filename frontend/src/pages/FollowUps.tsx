@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import { CalendarCheck } from 'lucide-react';
 import { api, Paged } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { useDirectory } from '../lib/hooks';
+import { sharesTeam, useDirectory } from '../lib/hooks';
 import { FOLLOW_UP_TYPES, LEAD_STATUS, fmtDateTime, fmtPhone, fmtRelativeDay } from '../lib/format';
 import { Avatar, Badge, Card, Empty, PageHeader, Pagination, Select, Spinner, StatCard, Table, Tabs, Td, Th } from '../components/ui';
 import { CompleteFollowUpModal } from '../components/LeadModals';
@@ -44,7 +44,7 @@ export default function FollowUps() {
           <Select value={owner} onChange={(e) => { setOwner(e.target.value); setPage(1); }} className="w-48">
             <option value="">Everyone I manage</option>
             <option value="me">Only mine</option>
-            {dir.data?.filter((u) => u.id !== me?.id && (can('followups.view.all') || me?.teamIds.includes(u.teamId ?? ''))).map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+            {dir.data?.filter((u) => u.id !== me?.id && (can('followups.view.all') || sharesTeam(u, me?.teamIds))).map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
           </Select>
         )} />
       <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">

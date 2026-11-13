@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { api, errMsg } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { useDirectory, useTeams } from '../lib/hooks';
+import { sharesTeam, useDirectory, useTeams } from '../lib/hooks';
 import { PRIORITY, TASK_STATUS, ago, fmtBytes, fmtDate, fmtDateTime, toLocalInput } from '../lib/format';
 import {
   Avatar, Badge, Button, Card, Drawer, Empty, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, Table, Td, Textarea, Th,
@@ -39,7 +39,7 @@ function useAssignees() {
   const dir = useDirectory();
   if (!can('tasks.create_for_others')) return dir.data?.filter((u) => u.id === me?.id) ?? [];
   if (can('tasks.manage.all')) return dir.data ?? [];
-  return dir.data?.filter((u) => u.id === me?.id || (u.teamId && me?.teamIds.includes(u.teamId))) ?? [];
+  return dir.data?.filter((u) => u.id === me?.id || sharesTeam(u, me?.teamIds)) ?? [];
 }
 
 /** Everyone on a task, first person first. Falls back to the single assignee for older rows. */
@@ -500,7 +500,7 @@ export default function Tasks() {
         </div>
         <Select value={assignee} onChange={(e) => setAssignee(e.target.value)} className="w-full sm:w-44">
           <option value="">Everyone</option><option value="me">Assigned to me</option><option value="unassigned">Unassigned</option>
-          {can('tasks.view.all', 'tasks.view.team') && dir.data?.filter((u) => u.id !== me?.id && (can('tasks.view.all') || me?.teamIds.includes(u.teamId ?? ''))).map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+          {can('tasks.view.all', 'tasks.view.team') && dir.data?.filter((u) => u.id !== me?.id && (can('tasks.view.all') || sharesTeam(u, me?.teamIds))).map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
         </Select>
         <Select value={priority} onChange={(e) => setPriority(e.target.value)} className="w-full sm:w-36">
           <option value="">Any priority</option>

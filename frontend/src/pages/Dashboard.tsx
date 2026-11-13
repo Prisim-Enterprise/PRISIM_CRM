@@ -8,7 +8,7 @@ import {
 import { api, Paged } from '../lib/api';
 import type { LeadRow } from './Leads';
 import { useAuth } from '../lib/auth';
-import { useDirectory, useTeams } from '../lib/hooks';
+import { sharesTeam, useDirectory, useTeams } from '../lib/hooks';
 import { CALL_OUTCOMES, LEAD_STATUS, ago, fmtDateTime, fmtDuration, fmtPhone, pct } from '../lib/format';
 import { Briefcase, CalendarClock, Globe, KanbanSquare, MessageSquareText, PhoneCall, StickyNote, Users } from 'lucide-react';
 import { Avatar, Badge, Card, ErrorBox, Input, PageHeader, Select, Spinner, StatCard, Table, Td, Th } from '../components/ui';
@@ -138,7 +138,7 @@ export default function Dashboard() {
             {isManager && (
               <Select value={userId} onChange={(e) => setUserId(e.target.value)} className="w-40">
                 <option value="">All employees</option>
-                {dir.data?.filter((u) => can('reports.view.all') || me?.teamIds.includes(u.teamId ?? '')).map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+                {dir.data?.filter((u) => can('reports.view.all') || sharesTeam(u, me?.teamIds)).map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
               </Select>
             )}
           </div>

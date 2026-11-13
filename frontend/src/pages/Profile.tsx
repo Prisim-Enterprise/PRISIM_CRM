@@ -30,7 +30,7 @@ export default function Profile() {
           <dl className="grid grid-cols-3 gap-y-2 text-sm">
             <dt className="text-slate-500">Name</dt><dd className="col-span-2 font-medium">{me?.fullName}</dd>
             <dt className="text-slate-500">Email</dt><dd className="col-span-2">{me?.email}</dd>
-            <dt className="text-slate-500">Team</dt><dd className="col-span-2">{me?.team?.name ?? '—'}</dd>
+            <dt className="text-slate-500">{(me?.teams?.length ?? 0) > 1 ? 'Teams' : 'Team'}</dt><dd className="col-span-2">{me?.teams?.length ? me.teams.map((t) => t.name).join(', ') : '—'}</dd>
             <dt className="text-slate-500">Roles</dt><dd className="col-span-2 flex gap-1">{me?.roles.map((r) => <Badge key={r} className="bg-indigo-50 text-indigo-700">{r.replace('_', ' ')}</Badge>)}</dd>
           </dl>
           <Field label="My phone number" hint="Click-to-call rings this number first, then connects you to the customer.">

@@ -23,7 +23,7 @@ export class AccessService {
   async teamMemberIds(user: AuthUser): Promise<string[]> {
     if (!user.teamIds.length) return [user.id];
     const members = await this.prisma.user.findMany({
-      where: { teamId: { in: user.teamIds } },
+      where: { OR: [{ teamId: { in: user.teamIds } }, { teamMemberships: { some: { teamId: { in: user.teamIds } } } }] },
       select: { id: true },
     });
     return [...new Set([user.id, ...members.map((m) => m.id)])];

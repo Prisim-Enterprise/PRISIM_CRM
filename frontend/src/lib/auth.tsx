@@ -13,6 +13,8 @@ export interface Me {
   timezone: string;
   teamId: string | null;
   team: { id: string; name: string } | null;
+  /** Every team the person is in, main team first. */
+  teams: { id: string; name: string }[];
   roles: string[];
   permissions: string[];
   teamIds: string[];

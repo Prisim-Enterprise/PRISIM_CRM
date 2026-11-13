@@ -126,6 +126,7 @@ export class AuthGuard implements CanActivate {
       include: {
         roles: { include: { role: { include: { permissions: { include: { permission: true } } } } } },
         ledTeams: { select: { id: true } },
+        teamMemberships: { select: { teamId: true } },
         permissionOverrides: { include: { permission: { select: { key: true } } } },
       },
     });
@@ -137,6 +138,7 @@ export class AuthGuard implements CanActivate {
     for (const o of user.permissionOverrides) if (o.effect === 'DENY') permissions.delete(o.permission.key);
     const teamIds = new Set(user.ledTeams.map((t) => t.id));
     if (user.teamId) teamIds.add(user.teamId);
+    for (const m of user.teamMemberships) teamIds.add(m.teamId);
     return {
       id: user.id,
       fullName: user.fullName,

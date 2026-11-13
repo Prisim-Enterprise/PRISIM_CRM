@@ -44,11 +44,15 @@ export class MonthlyReportService {
 
     const people = await this.prisma.user.findMany({
       where: { deletedAt: null, email: { not: 'system@prisim.internal' }, ...(ids === null ? {} : { id: only }) },
-      select: { id: true, fullName: true, isActive: true, team: { select: { name: true } } },
+      select: {
+        id: true, fullName: true, isActive: true, team: { select: { name: true } },
+        teamMemberships: { select: { team: { select: { name: true } } }, orderBy: { createdAt: 'asc' } },
+      },
       orderBy: { fullName: 'asc' },
     });
     const uids = people.map((p) => p.id);
-    const teamsOf = new Map(people.map((p) => [p.id, p.team ? [p.team.name] : []]));
+    // Everyone counts in each team they belong to.
+    const teamsOf = new Map(people.map((p) => [p.id, p.teamMemberships.length ? p.teamMemberships.map((m) => m.team.name) : p.team ? [p.team.name] : []]));
 
     const [done, assigned, overdue, calls, followUps, converted, clientWork, seo, media] = await Promise.all([
       // Finished this month. A shared task counts for each person on it.

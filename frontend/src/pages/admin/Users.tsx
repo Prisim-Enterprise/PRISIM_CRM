@@ -12,9 +12,11 @@ import { Avatar, Badge, Button, Card, ErrorBox, Field, Input, Modal, PageHeader,
 interface UserRow {
   id: string; fullName: string; email: string; phone: string | null; isActive: boolean; lastLoginAt: string | null;
   teamId: string | null; team: { id: string; name: string } | null; roles: { role: { key: string; name: string } }[];
+  teamMemberships?: { team: { id: string; name: string } }[];
   _count?: { permissionOverrides: number };
 }
 interface Role { id: string; key: string; name: string }
+const teamsOf = (u: UserRow) => (u.teamMemberships?.length ? u.teamMemberships.map((m) => m.team) : u.team ? [u.team] : []);
 
 function UserModal({ user, onClose }: { user: UserRow | 'new'; onClose: () => void }) {
   const qc = useQueryClient();
@@ -24,12 +26,12 @@ function UserModal({ user, onClose }: { user: UserRow | 'new'; onClose: () => vo
   const isNew = user === 'new';
   const [f, setF] = useState({
     fullName: isNew ? '' : user.fullName, email: isNew ? '' : user.email, phone: isNew ? '' : user.phone ?? '',
-    teamId: isNew ? '' : user.teamId ?? '', roleKeys: isNew ? ['employee'] : user.roles.map((r) => r.role.key),
+    teamIds: isNew ? [] as string[] : teamsOf(user).map((t) => t.id), roleKeys: isNew ? ['employee'] : user.roles.map((r) => r.role.key),
   });
   const m = useMutation({
     mutationFn: () => isNew
-      ? api.post<{ inviteSent?: boolean }>('/users', { ...f, phone: f.phone || undefined, teamId: f.teamId || undefined })
-      : api.patch(`/users/${user.id}`, { fullName: f.fullName, email: f.email, phone: f.phone || null, teamId: f.teamId || null, roleKeys: f.roleKeys }),
+      ? api.post<{ inviteSent?: boolean }>('/users', { ...f, phone: f.phone || undefined })
+      : api.patch(`/users/${user.id}`, { fullName: f.fullName, email: f.email, phone: f.phone || null, teamIds: f.teamIds, roleKeys: f.roleKeys }),
     onSuccess: (r) => {
       if (isNew && !(r as { inviteSent?: boolean }).inviteSent) toast.warning('User created, but the invitation email could not be sent. Use the key button to set their password, then give it to them privately.');
       else toast.success(isNew ? 'User created. Invitation sent by email.' : 'User updated');
@@ -44,13 +46,22 @@ function UserModal({ user, onClose }: { user: UserRow | 'new'; onClose: () => vo
         <Field label="Email (login)"><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
         <Field label="Phone" hint="Used for click-to-call"><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
       </div>
-      <Field label="Team">
-        <Select value={f.teamId} onChange={(e) => setF({ ...f, teamId: e.target.value })}>
-          <option value="">No team</option>
-          {teams.data?.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-        </Select>
-      </Field>
-      <Field label="Roles">
+      <div role="group" aria-labelledby="user-teams">
+        <p id="user-teams" className="mb-1 block text-sm font-medium text-slate-700">Teams</p>
+        <div className="space-y-1 rounded-lg border border-slate-200 p-2">
+          {!teams.data?.length && <p className="text-sm text-slate-400">No teams yet. Create one below.</p>}
+          {teams.data?.map((t) => (
+            <label key={t.id} className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={f.teamIds.includes(t.id)}
+                onChange={(e) => setF({ ...f, teamIds: e.target.checked ? [...f.teamIds, t.id] : f.teamIds.filter((x) => x !== t.id) })} />
+              {t.name}{f.teamIds[0] === t.id && f.teamIds.length > 1 && <span className="text-xs text-slate-400">(main)</span>}
+            </label>
+          ))}
+        </div>
+        <p className="mt-1 text-xs text-slate-500">{f.teamIds.length > 1 ? `In ${f.teamIds.length} teams. ${teams.data?.find((t) => t.id === f.teamIds[0])?.name ?? 'The first'} is their main team.` : 'Tick every team they belong to.'}</p>
+      </div>
+      <div role="group" aria-labelledby="user-roles">
+        <p id="user-roles" className="mb-1 block text-sm font-medium text-slate-700">Roles</p>
         <div className="space-y-1 rounded-lg border border-slate-200 p-2">
           {roles.data?.filter((r) => r.key !== 'super_admin' || can('roles.manage')).map((r) => (
             <label key={r.key} className="flex items-center gap-2 text-sm">
@@ -58,7 +69,7 @@ function UserModal({ user, onClose }: { user: UserRow | 'new'; onClose: () => vo
             </label>
           ))}
         </div>
-      </Field>
+      </div>
       {isNew && <p className="text-xs text-slate-500">They'll get an email invitation to create their sign-in. It must be this exact email address.</p>}
       <ErrorBox error={m.error} />
     </Modal>
@@ -146,13 +157,13 @@ export default function AdminUsers() {
       <Card title="Users" actions={<Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…" className="w-56" />}>
         {users.isLoading ? <Spinner /> : (
           <Table>
-            <thead><tr><Th>User</Th><Th>Phone</Th><Th>Team</Th><Th>Roles</Th><Th>Last login</Th><Th>Status</Th>{(manage || can('roles.manage')) && <Th />}</tr></thead>
+            <thead><tr><Th>User</Th><Th>Phone</Th><Th>Teams</Th><Th>Roles</Th><Th>Last login</Th><Th>Status</Th>{(manage || can('roles.manage')) && <Th />}</tr></thead>
             <tbody>
               {users.data?.map((u) => (
                 <tr key={u.id} className={u.isActive ? '' : 'opacity-50'}>
                   <Td><span className="flex items-center gap-2.5"><Avatar name={u.fullName} /><span><p className="font-medium">{u.fullName}</p><p className="text-xs text-slate-500">{u.email}</p></span></span></Td>
                   <Td className="whitespace-nowrap">{fmtPhone(u.phone)}</Td>
-                  <Td>{u.team?.name ?? '—'}</Td>
+                  <Td>{teamsOf(u).length ? <div className="flex flex-wrap gap-1">{teamsOf(u).map((t) => <Badge key={t.id} className="bg-slate-100 text-slate-700">{t.name}</Badge>)}</div> : '—'}</Td>
                   <Td><div className="flex flex-wrap gap-1">{u.roles.map((r) => <Badge key={r.role.key} className="bg-indigo-50 text-indigo-700">{r.role.name}</Badge>)}
                     {!!u._count?.permissionOverrides && <Badge className="bg-amber-100 text-amber-800">+{u._count.permissionOverrides} custom</Badge>}</div></Td>
                   <Td className="whitespace-nowrap text-slate-500">{u.lastLoginAt ? ago(u.lastLoginAt) : 'Never'}</Td>
