@@ -4,7 +4,9 @@ import clsx from 'clsx';
 import { format } from 'date-fns';
 import { ChevronDown, ChevronRight, Download, Printer } from 'lucide-react';
 import { toast } from 'sonner';
+import { Navigate } from 'react-router-dom';
 import { api, errMsg } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { Badge, Button, Card, Empty, ErrorBox, Input, PageHeader, Spinner, StatCard, Table, Tabs, Td, Th } from '../components/ui';
 import { PRIORITY } from '../lib/format';
 
@@ -42,6 +44,13 @@ const COLS: { key: keyof Counts; label: string; tip?: string }[] = [
 ];
 
 export default function Reports() {
+  const { can } = useAuth();
+  // Organisation-wide figures: Super Admin and Admin only.
+  if (!can('reports.view.all')) return <Navigate to="/" replace />;
+  return <MonthlyReports />;
+}
+
+function MonthlyReports() {
   const [month, setMonth] = useState(thisMonth());
   const [tab, setTab] = useState<'people' | 'teams' | 'tasks'>('people');
   const [open, setOpen] = useState<string | null>(null);

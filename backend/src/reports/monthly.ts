@@ -4,7 +4,7 @@ import { IsOptional, Matches } from 'class-validator';
 import type { Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { AccessService } from '../common/access.service';
-import { AuthUser, CurrentUser } from '../common/current-user';
+import { AuthUser, CurrentUser, RequireAny } from '../common/current-user';
 import { APP_TZ, localDateKey, parseLocalDate } from '../common/time';
 
 class MonthQuery {
@@ -175,6 +175,8 @@ export class MonthlyReportService {
 @ApiTags('Reports')
 @ApiBearerAuth()
 @Controller('reports/monthly')
+// Organisation-wide: Super Admin and Admin only.
+@RequireAny('reports.view.all')
 export class MonthlyReportController {
   constructor(private svc: MonthlyReportService) {}
 

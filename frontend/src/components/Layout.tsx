@@ -156,7 +156,7 @@ export default function Layout() {
     { to: '/media', label: 'Media', icon: Clapperboard },
     { to: '/seo', label: 'SEO', icon: TrendingUp },
     { to: '/chat', label: 'Team chat', icon: MessagesSquare, badge: micUnread.data?.count },
-    { to: '/reports', label: 'Reports', icon: BarChart3 },
+    ...(can('reports.view.all') ? [{ to: '/reports', label: 'Reports', icon: BarChart3 }] : []),
     ...(can('quotations.manage') ? [{ to: '/quotations', label: 'Quotations', icon: FileText }] : []),
     { to: '/feedback', label: 'Feedback & Queries', icon: MessageSquareText },
   ];
