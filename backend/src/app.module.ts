@@ -22,6 +22,7 @@ import { MediaModule } from './media/media';
 import { SeoModule } from './seo/seo';
 import { MessagesModule } from './messages/messages';
 import { PostingModule } from './clients/posting';
+import { QuotationsModule } from './quotations/quotations';
 import { AuthModule } from './auth/auth';
 
 @Controller('health')
@@ -59,6 +60,7 @@ class HealthController {
     SeoModule,
     MessagesModule,
     PostingModule,
+    QuotationsModule,
     JobsModule,
   ],
   controllers: [HealthController],

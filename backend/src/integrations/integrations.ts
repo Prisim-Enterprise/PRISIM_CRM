@@ -32,8 +32,19 @@ interface SheetsConfig {
   intervalMinutes?: number;
   mapping?: Partial<FieldMapping>;
   autoAssign?: { enabled: boolean; method: 'round_robin' | 'workload'; userIds: string[] };
+  /** Read every tab of the sheet (e.g. "high" and "low" lead tabs), not just one. */
+  allTabs?: boolean;
 }
-interface SheetsState { lastRow?: number; lastSyncAt?: string; lastReconcileAt?: string; lastError?: string | null; readVia?: 'link' | 'service_account' }
+interface SheetsState {
+  lastRow?: number; lastSyncAt?: string; lastReconcileAt?: string; lastError?: string | null; readVia?: 'link' | 'service_account';
+  /** With allTabs: the last row read on each tab, by tab id. */
+  tabRows?: Record<string, number>;
+  tabs?: { name: string; gid: string; rows: number }[];
+}
+/** Each lead keeps the name of the tab it came from, in its imported details. */
+const TAB_FIELD = 'sheet_tab';
+/** Meta puts a sample row ("<test lead: dummy data for …>") in lead sheets. It isn't a lead. */
+const isMetaTestLead = (r: Row) => Object.values(r.data).some((v) => /<?test lead: dummy data/i.test(v ?? ''));
 
 /** Each Google Sheet feeds one lead source. */
 export const CONNECTIONS = {
@@ -59,6 +70,7 @@ class SheetsConfigDto {
   @IsOptional() @IsInt() @Min(1) @Max(1440) intervalMinutes?: number;
   @IsOptional() @IsObject() mapping?: Partial<FieldMapping>;
   @IsOptional() @ValidateNested() @Type(() => AutoAssignDto) autoAssign?: AutoAssignDto;
+  @IsOptional() @IsBoolean() allTabs?: boolean;
 }
 
 class ErrorQuery extends PageQuery {
@@ -153,10 +165,11 @@ export class LeadSyncService {
       intervalMinutes: dto.intervalMinutes ?? config.intervalMinutes ?? 5,
       mapping: { ...DEFAULT_MAPPING, ...config.mapping, ...dto.mapping },
       autoAssign: dto.autoAssign ?? config.autoAssign,
+      allTabs: dto.allTabs ?? config.allTabs ?? false,
     };
     if (dto.enabled && !next.spreadsheetId) throw new BadRequestException('Paste the Google Sheet link');
     // Changing the sheet resets the cursor.
-    const sheetChanged = next.spreadsheetId !== config.spreadsheetId || next.sheetName !== config.sheetName || next.gid !== config.gid;
+    const sheetChanged = next.spreadsheetId !== config.spreadsheetId || next.sheetName !== config.sheetName || next.gid !== config.gid || !!next.allTabs !== !!config.allTabs;
     await this.prisma.integrationConfig.update({
       where: { key: CONNECTIONS[conn].configKey },
       data: { enabled: dto.enabled, config: next as Prisma.InputJsonValue, ...(sheetChanged ? { state: {} } : {}) },
@@ -213,6 +226,17 @@ export class LeadSyncService {
       }
     }
     throw lastErr!;
+  }
+
+  /** The tabs of a sheet shared by link, in sheet order. */
+  private async listTabs(spreadsheetId: string): Promise<{ name: string; gid: string }[]> {
+    const res = await fetch(`https://docs.google.com/spreadsheets/d/${encodeURIComponent(spreadsheetId)}/htmlview`, { signal: AbortSignal.timeout(30_000) });
+    if (res.status === 401 || res.status === 403) throw new Error('The sheet is not shared by link. In Google Sheets: Share → General access → "Anyone with the link" → Viewer.');
+    if (!res.ok) throw new Error(`Google returned HTTP ${res.status}`);
+    const html = await res.text();
+    const tabs = [...html.matchAll(/\{name:\s*"((?:[^"\\]|\\.)*)",\s*pageUrl:[^}]*?gid:\s*"(\d+)"/g)].map((m) => ({ name: JSON.parse(`"${m[1]}"`) as string, gid: m[2] }));
+    if (!tabs.length) throw new Error('No tabs found in the sheet');
+    return tabs;
   }
 
   /** Service account when configured (and a tab name is set); otherwise the shared link. */
@@ -390,13 +414,14 @@ export class LeadSyncService {
         }
         throw new BadRequestException(`Sync failed: ${msg}`);
       }
+      if (config.allTabs) return await this.syncAllTabs(conn, trigger, config, state, mapping);
       const { rows: all } = rowsToObjects(values, config.headerRow ?? 1);
       const rows = all.filter((r) => !blank(r));
       const lastRow = state.lastRow ?? 0;
       // Incremental: only rows after the cursor. Reconcile (or a shrunken sheet) re-reads everything;
       // dedup on external id keeps that safe.
       const full = trigger === 'reconcile' || (rows.length > 0 && rows[rows.length - 1].rowNumber < lastRow);
-      const todo = full ? rows : rows.filter((r) => r.rowNumber > lastRow);
+      const todo = (full ? rows : rows.filter((r) => r.rowNumber > lastRow)).filter((r) => !isMetaTestLead(r));
       const result = await this.ingest(trigger, sourceKey, sourceName, todo, mapping, config.autoAssign);
       const newLast = rows.length ? rows[rows.length - 1].rowNumber : full ? 0 : lastRow;
       await this.prisma.integrationConfig.update({
@@ -413,6 +438,38 @@ export class LeadSyncService {
     } finally {
       this.running.delete(conn);
     }
+  }
+
+  /** Reads every tab; each tab keeps its own "last row read", and each lead records its tab. */
+  private async syncAllTabs(conn: ConnectionKey, trigger: 'schedule' | 'manual' | 'reconcile', config: SheetsConfig, state: SheetsState, mapping: FieldMapping) {
+    const { configKey, sourceKey, sourceName } = CONNECTIONS[conn];
+    const tabs = await this.listTabs(config.spreadsheetId!);
+    const todo: Row[] = [];
+    const tabRows: Record<string, number> = { ...(state.tabRows ?? {}) };
+    const seen: { name: string; gid: string; rows: number }[] = [];
+    for (const tab of tabs) {
+      const values = await this.readViaLink({ ...config, gid: tab.gid, sheetName: undefined });
+      const rows = rowsToObjects(values, config.headerRow ?? 1).rows.filter((r) => !blank(r));
+      seen.push({ ...tab, rows: rows.length });
+      const last = tabRows[tab.gid] ?? 0;
+      const full = trigger === 'reconcile' || (rows.length > 0 && rows[rows.length - 1].rowNumber < last);
+      for (const r of full ? rows : rows.filter((x) => x.rowNumber > last)) {
+        if (!isMetaTestLead(r)) todo.push({ ...r, data: { ...r.data, [TAB_FIELD]: tab.name.trim() } });
+      }
+      tabRows[tab.gid] = rows.length ? rows[rows.length - 1].rowNumber : full ? 0 : last;
+    }
+    const result = await this.ingest(trigger, sourceKey, sourceName, todo, mapping, config.autoAssign);
+    await this.prisma.integrationConfig.update({
+      where: { key: configKey },
+      data: {
+        state: {
+          ...state, tabRows, tabs: seen, lastSyncAt: new Date().toISOString(), lastError: null, readVia: 'link',
+          ...(trigger === 'reconcile' ? { lastReconcileAt: new Date().toISOString() } : {}),
+        } as Prisma.InputJsonValue,
+      },
+    });
+    if (result.rowsRead) this.log.log(`${conn} ${trigger} (all tabs): ${JSON.stringify({ ...result, errors: result.errors.length })}`);
+    return result;
   }
 
   async importCsv(user: AuthUser, file: Express.Multer.File, mappingOverride?: Partial<FieldMapping>) {

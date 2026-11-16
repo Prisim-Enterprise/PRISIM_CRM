@@ -46,6 +46,7 @@ model User {
   calls                 CallLog[]
   tasksAssigned         Task[]               @relation("TaskAssignee")
   taskAssignments       TaskAssignee[]
+  quotationsCreated     Quotation[]
   messagesSent          Message[]            @relation("MessageSender")
   messagesReceived      Message[]            @relation("MessageRecipient")
   messageReads          MessageRead[]
@@ -609,6 +610,7 @@ model Client {
   mediaItems     MediaItem[]
   postingPeriods PostingPeriod[]
   tasks          TaskClient[]
+  quotations     Quotation[]
   seoAccounts    SeoAccount[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
@@ -1007,4 +1009,40 @@ model PostingSlot {
   @@index([periodId, date])
   @@index([date])
   @@map("posting_slots")
+}
+
+// ───── Quotations: shared by sales and accounts, printed in Prisim's quotation format ─────
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+}
+
+model Quotation {
+  id           String          @id @default(uuid()) @db.Uuid
+  /// e.g. PR/DM/046
+  number       String          @unique
+  date         DateTime        @db.Date
+  validityDays Int             @default(15)
+  clientId     String?         @db.Uuid
+  client       Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientName   String
+  address      String?
+  /// [{ title, points: string[], qty, amount }]
+  items        Json
+  gstRate      Decimal         @default(18) @db.Decimal(5, 2)
+  /// Statement of work, one entry per numbered line.
+  terms        Json
+  status       QuotationStatus @default(DRAFT)
+  notes        String?
+  createdById  String          @db.Uuid
+  createdBy    User            @relation(fields: [createdById], references: [id])
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([date])
+  @@index([clientId])
+  @@map("quotations")
 }

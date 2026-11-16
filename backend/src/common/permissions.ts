@@ -42,6 +42,8 @@ export const PERMISSIONS = {
   // SEO
   'seo.view.all': ['SEO', 'View every SEO client and all daily updates'],
   'seo.manage': ['SEO', 'Add SEO clients and choose who handles them'],
+  // Quotations
+  'quotations.manage': ['Quotations', 'Create, edit and print quotations'],
   // Reports
   'reports.view.all': ['Reports', 'View organisation-wide reports'],
   'reports.view.team': ['Reports', 'View team reports'],
@@ -93,6 +95,6 @@ export const DEFAULT_ROLES: { key: string; name: string; description: string; pe
     name: 'Sales Employee',
     description: 'Works assigned leads, logs calls and follow-ups, manages own tasks and feedback.',
     // Product decision: employees can view all leads but edit only their own.
-    permissions: ['leads.view.all'],
+    permissions: ['leads.view.all', 'quotations.manage'],
   },
 ];

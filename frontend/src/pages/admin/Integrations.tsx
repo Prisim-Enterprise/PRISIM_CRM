@@ -14,7 +14,7 @@ interface SheetsStatus {
   key: 'website' | 'meta'; label: string; sourceKey: string; leadCount: number;
   enabled: boolean;
   config: {
-    spreadsheetId?: string; sheetName?: string; gid?: string; headerRow?: number; intervalMinutes?: number; mapping: Record<string, string>;
+    spreadsheetId?: string; sheetName?: string; gid?: string; headerRow?: number; intervalMinutes?: number; mapping: Record<string, string>; allTabs?: boolean;
     autoAssign?: { enabled: boolean; method: string; userIds: string[] };
   };
   state: { lastRow?: number; lastSyncAt?: string; lastReconcileAt?: string; lastError?: string | null; readVia?: 'link' | 'service_account' };
@@ -52,7 +52,7 @@ function SheetConnection({ s, manage }: { s: SheetsStatus; manage: boolean }) {
   const sheetUrl = s.config.spreadsheetId ? `https://docs.google.com/spreadsheets/d/${s.config.spreadsheetId}/edit${s.config.gid ? `#gid=${s.config.gid}` : ''}` : '';
   const [f, setF] = useState({
     enabled: s.enabled, spreadsheetId: sheetUrl, sheetName: s.config.sheetName ?? '', headerRow: s.config.headerRow ?? 1,
-    intervalMinutes: s.config.intervalMinutes ?? 5, mapping: s.config.mapping,
+    intervalMinutes: s.config.intervalMinutes ?? 5, mapping: s.config.mapping, allTabs: !!s.config.allTabs,
     autoAssign: s.config.autoAssign ?? { enabled: false, method: 'round_robin', userIds: [] as string[] },
   });
   const [busy, setBusy] = useState(false);
@@ -105,7 +105,14 @@ function SheetConnection({ s, manage }: { s: SheetsStatus; manage: boolean }) {
 
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Google Sheet link" className="md:col-span-2"><Input value={f.spreadsheetId} onChange={(e) => setF({ ...f, spreadsheetId: e.target.value })} placeholder="https://docs.google.com/spreadsheets/d/…/edit" /></Field>
-            <Field label="Tab name (optional)" hint="Leave empty to read the tab in the link (or the first tab)."><Input value={f.sheetName} onChange={(e) => setF({ ...f, sheetName: e.target.value })} placeholder="Sheet1" /></Field>
+            <div>
+              <label className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-700">
+                <input type="checkbox" checked={f.allTabs} onChange={(e) => setF({ ...f, allTabs: e.target.checked })} />Read every tab in this sheet
+              </label>
+              {f.allTabs
+                ? <p className="text-xs text-slate-500">All tabs are read (e.g. "high" and "low"). Each lead shows which tab it came from.</p>
+                : <Field label="Tab name (optional)" hint="Leave empty to read the tab in the link (or the first tab)."><Input value={f.sheetName} onChange={(e) => setF({ ...f, sheetName: e.target.value })} placeholder="Sheet1" /></Field>}
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Header row"><Input type="number" min={1} value={f.headerRow} onChange={(e) => setF({ ...f, headerRow: Number(e.target.value) })} /></Field>
               <Field label="Check every (min)"><Input type="number" min={1} max={1440} value={f.intervalMinutes} onChange={(e) => setF({ ...f, intervalMinutes: Number(e.target.value) })} /></Field>
