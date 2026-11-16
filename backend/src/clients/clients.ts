@@ -124,6 +124,10 @@ export class ClientsService {
 
   // ───── Clients ─────
 
+  directory() {
+    return this.prisma.client.findMany({ select: { id: true, name: true, status: true }, orderBy: [{ status: 'asc' }, { name: 'asc' }] });
+  }
+
   async list(user: AuthUser, q: ClientQuery) {
     const and: Prisma.ClientWhereInput[] = [];
     if (!this.seesAll(user)) and.push({ works: { some: this.workWhere(user) } });
@@ -410,6 +414,8 @@ export class ClientsController {
   constructor(private svc: ClientsService) {}
 
   @Get('clients') list(@CurrentUser() u: AuthUser, @Query() q: ClientQuery) { return this.svc.list(u, q); }
+  /** Names only, for the client checklist on tasks. Everyone can pick any client. */
+  @Get('clients/directory') directory() { return this.svc.directory(); }
   @Get('clients/summary') summary(@CurrentUser() u: AuthUser) { return this.svc.summary(u); }
   @Get('clients/:id') get(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.svc.get(u, id); }
   @Post('clients') @RequireAny('clients.manage') create(@CurrentUser() u: AuthUser, @Body() dto: ClientDto) { return this.svc.create(u, dto); }

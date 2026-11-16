@@ -21,11 +21,13 @@ export const PERMISSIONS = {
   'calls.recordings.all': ['Calls', 'Listen to all call recordings'],
   'calls.recordings.team': ['Calls', "Listen to own team's recordings"],
   // Tasks
+  // Tasks are private: people see the tasks they are on or created. Only these see every task.
   'tasks.view.all': ['Tasks', 'View all tasks'],
-  'tasks.view.team': ['Tasks', "View own team's tasks"],
+  // Kept so existing roles still load; tasks no longer use team-wide access.
+  'tasks.view.team': ['Tasks', "No longer used: tasks are private to the people on them, their creator and admins"],
   'tasks.manage.all': ['Tasks', 'Edit, reassign and review any task'],
-  'tasks.manage.team': ['Tasks', 'Edit, reassign and review team tasks'],
-  'tasks.create_for_others': ['Tasks', 'Create tasks for other people'],
+  'tasks.manage.team': ['Tasks', 'No longer used: only the creator and admins can edit a task'],
+  'tasks.create_for_others': ['Tasks', 'Create tasks for other people (anyone with manage-all, otherwise own team)'],
   // Feedback
   'feedback.view.all': ['Feedback', 'View all feedback and queries'],
   'feedback.manage': ['Feedback', 'Respond to, assign and resolve feedback'],
@@ -76,7 +78,7 @@ export const DEFAULT_ROLES: { key: string; name: string; description: string; pe
     permissions: [
       'leads.view.all', 'leads.edit.team', 'leads.assign.team',
       'followups.view.team', 'calls.view.team', 'calls.recordings.team',
-      'tasks.view.team', 'tasks.manage.team', 'tasks.create_for_others',
+      'tasks.create_for_others',
       'reports.view.team', 'users.view',
     ],
   },

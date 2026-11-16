@@ -22,6 +22,7 @@ import Media from './pages/Media';
 import Seo from './pages/Seo';
 import TeamChat from './pages/TeamChat';
 import Reports from './pages/Reports';
+import Accounting from './pages/Accounting';
 import Profile from './pages/Profile';
 import AdminUsers from './pages/admin/Users';
 import AdminRoles from './pages/admin/Roles';
@@ -61,6 +62,7 @@ function App() {
         <Route path="seo" element={<Seo />} />
         <Route path="chat" element={<TeamChat />} />
         <Route path="reports" element={<Reports />} />
+        <Route path="accounting" element={<Accounting />} />
         <Route path="mic" element={<Navigate to="/chat" replace />} />
         <Route path="feedback" element={<Feedback />} />
         <Route path="feedback/:id" element={<FeedbackDetail />} />

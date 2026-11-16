@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import clsx from 'clsx';
 import {
-  CheckSquare, KanbanSquare, List, MessageSquare, Paperclip, Plus, Search, Calendar, Trash2, Check, X, Link2, ShieldCheck, FileText,
+  Building2, CheckSquare, KanbanSquare, List, MessageSquare, Paperclip, Plus, Search, Calendar, Trash2, Check, X, Link2, ShieldCheck, FileText,
 } from 'lucide-react';
 import { api, errMsg } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -19,6 +19,7 @@ interface TaskRow {
   id: string; key: string; number: number; title: string; status: string; priority: string; position: number; dueAt: string | null;
   isOverdue: boolean; requiresReview: boolean; assignee: Person | null; assignees: { userId: string; user: Person }[]; createdBy: Person; team: { id: string; name: string } | null;
   lead: { id: string; fullName: string } | null; checklistDone: number;
+  clients?: { clientId: string; client: { id: string; name: string } }[];
   _count: { comments: number; subtasks: number; attachments: number; checklist: number };
 }
 interface TaskFull extends Omit<TaskRow, '_count' | 'checklistDone'> {
@@ -74,15 +75,45 @@ function PeoplePicker({ value, onChange, options, extra = [], disabled, meId }: 
   );
 }
 
-export function CreateTaskModal({ open, onClose, defaults }: { open: boolean; onClose: () => void; defaults?: { leadId?: string; title?: string; parentId?: string; status?: string } }) {
+interface ClientOption { id: string; name: string; status: string }
+const useClientDirectory = () => useQuery({ queryKey: ['client-directory'], queryFn: () => api.get<ClientOption[]>('/clients/directory'), staleTime: 60_000 });
+
+/** Tick the clients this task is for. Every client is listed, with a search box. */
+function ClientPicker({ value, onChange, disabled }: { value: string[]; onChange: (v: string[]) => void; disabled?: boolean }) {
+  const dir = useClientDirectory();
+  const [q, setQ] = useState('');
+  const all = dir.data ?? [];
+  const shown = all.filter((c) => !q.trim() || c.name.toLowerCase().includes(q.trim().toLowerCase()));
+  const picked = all.filter((c) => value.includes(c.id));
+  if (disabled) return <p className="text-sm text-slate-700">{picked.length ? picked.map((c) => c.name).join(', ') : <span className="text-slate-400">No client</span>}</p>;
+  return (
+    <div className="rounded-xl border border-slate-200">
+      {all.length > 8 && <div className="border-b border-slate-100 p-2"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search clients…" aria-label="Search clients" /></div>}
+      <div className="scroll-thin grid max-h-44 gap-0.5 overflow-y-auto p-1.5 sm:grid-cols-2">
+        {dir.isLoading && <p className="px-2 py-1 text-sm text-slate-400">Loading clients…</p>}
+        {!dir.isLoading && !shown.length && <p className="px-2 py-1 text-sm text-slate-400">{all.length ? 'No match' : 'No clients yet'}</p>}
+        {shown.map((c) => (
+          <label key={c.id} className={clsx('flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 text-sm', value.includes(c.id) ? 'bg-indigo-50 text-slate-900' : 'hover:bg-slate-50')}>
+            <input type="checkbox" checked={value.includes(c.id)} onChange={(e) => onChange(e.target.checked ? [...value, c.id] : value.filter((x) => x !== c.id))} />
+            <span className="truncate">{c.name}</span>
+            {c.status !== 'ACTIVE' && <span className="ml-auto shrink-0 text-[10px] uppercase text-slate-400">{c.status.replace('_', ' ').toLowerCase()}</span>}
+          </label>
+        ))}
+      </div>
+      {value.length > 0 && <p className="border-t border-slate-100 px-3 py-1.5 text-xs text-slate-500">{value.length} selected: {picked.map((c) => c.name).join(', ')}</p>}
+    </div>
+  );
+}
+
+export function CreateTaskModal({ open, onClose, defaults }: { open: boolean; onClose: () => void; defaults?: { leadId?: string; title?: string; parentId?: string; status?: string; clientIds?: string[] } }) {
   const { me } = useAuth();
   const assignees = useAssignees();
   const teams = useTeams();
   const qc = useQueryClient();
-  const [f, setF] = useState({ title: defaults?.title ?? '', description: '', assigneeIds: me?.id ? [me.id] : [] as string[], priority: 'MEDIUM', dueAt: '', teamId: '', requiresReview: false });
+  const [f, setF] = useState({ title: defaults?.title ?? '', description: '', assigneeIds: me?.id ? [me.id] : [] as string[], clientIds: defaults?.clientIds ?? [] as string[], priority: 'MEDIUM', dueAt: '', teamId: '', requiresReview: false });
   const m = useMutation({
     mutationFn: () => api.post('/tasks', {
-      title: f.title, description: f.description || undefined, assigneeIds: f.assigneeIds, priority: f.priority,
+      title: f.title, description: f.description || undefined, assigneeIds: f.assigneeIds, clientIds: f.clientIds, priority: f.priority,
       dueAt: f.dueAt ? new Date(f.dueAt).toISOString() : undefined, teamId: f.teamId || undefined, requiresReview: f.requiresReview,
       leadId: defaults?.leadId, parentId: defaults?.parentId,
     }),
@@ -97,6 +128,10 @@ export function CreateTaskModal({ open, onClose, defaults }: { open: boolean; on
         <p className="mb-1 text-sm font-medium text-slate-700">Assigned to</p>
         <PeoplePicker value={f.assigneeIds} onChange={(v) => setF({ ...f, assigneeIds: v })} options={assignees} meId={me?.id} />
         {f.assigneeIds.length > 1 && <p className="mt-1 text-xs text-slate-500">One shared task: they all see it, can move it and get its updates.</p>}
+      </div>
+      <div>
+        <p className="mb-1 text-sm font-medium text-slate-700">Client (optional)</p>
+        <ClientPicker value={f.clientIds} onChange={(v) => setF({ ...f, clientIds: v })} />
       </div>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Priority">
@@ -128,6 +163,11 @@ function TaskCard({ t, onOpen, onDragStart, onMove }: { t: TaskRow; onOpen: () =
       </div>
       <p className="text-sm font-medium leading-snug text-slate-800 [overflow-wrap:anywhere]">{t.title}</p>
       {t.lead && <p className="mt-1 flex items-center gap-1 text-xs text-indigo-700"><Link2 className="h-3 w-3" />{t.lead.fullName}</p>}
+      {!!t.clients?.length && (
+        <p className="mt-1 flex items-center gap-1 truncate text-xs text-slate-500" title={t.clients.map((c) => c.client.name).join(', ')}>
+          <Building2 className="h-3 w-3 shrink-0" /><span className="truncate">{t.clients[0].client.name}{t.clients.length > 1 && ` +${t.clients.length - 1}`}</span>
+        </p>
+      )}
       <div className="mt-2.5 flex items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-400">
           {t.dueAt && <span className={clsx('flex items-center gap-0.5', t.isOverdue && 'font-semibold text-rose-600')}><Calendar className="h-3 w-3" />{fmtDate(t.dueAt)}</span>}
@@ -178,9 +218,10 @@ function activityText(a: TaskFull['activities'][number]) {
   }
 }
 
-type Draft = { title: string; description: string; priority: string; assigneeIds: string[]; due: string; requiresReview: boolean };
+type Draft = { title: string; description: string; priority: string; assigneeIds: string[]; clientIds: string[]; due: string; requiresReview: boolean };
 const toDraft = (t: TaskFull): Draft => ({
   title: t.title, description: t.description ?? '', priority: t.priority, assigneeIds: peopleOf(t).map((p) => p.id),
+  clientIds: (t.clients ?? []).map((c) => c.clientId),
   due: t.dueAt ? toLocalInput(new Date(t.dueAt)) : '', requiresReview: t.requiresReview,
 });
 
@@ -213,6 +254,7 @@ function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   if (d.description !== saved.description) changes.description = d.description;
   if (d.priority !== saved.priority) changes.priority = d.priority;
   if (d.assigneeIds.join() !== saved.assigneeIds.join()) changes.assigneeIds = d.assigneeIds;
+  if ([...d.clientIds].sort().join() !== [...saved.clientIds].sort().join()) changes.clientIds = d.clientIds;
   if (d.due !== saved.due) changes.dueAt = d.due ? new Date(d.due).toISOString() : null;
   if (d.requiresReview !== saved.requiresReview) changes.requiresReview = d.requiresReview;
   const dirty = Object.keys(changes).length > 0;
@@ -273,6 +315,10 @@ function TaskDrawer({ id, onClose }: { id: string; onClose: () => void }) {
           <div className="col-span-2">
             <p className="mb-1 text-sm font-medium text-slate-700">Assigned to</p>
             <PeoplePicker value={d.assigneeIds} onChange={(v) => edit({ assigneeIds: v })} options={assignees} extra={peopleOf(t)} disabled={!canManage} meId={me?.id} />
+          </div>
+          <div className="col-span-2">
+            <p className="mb-1 text-sm font-medium text-slate-700">Client</p>
+            <ClientPicker value={d.clientIds} onChange={(v) => edit({ clientIds: v })} disabled={!canManage} />
           </div>
           <Field label="Due">
             <Input type="datetime-local" disabled={!canManage} value={d.due} onChange={(e) => edit({ due: e.target.value })} />
@@ -420,7 +466,7 @@ export default function Tasks() {
   const dir = useDirectory();
   const [sp, setSp] = useSearchParams();
   const [view, setView] = useState<'board' | 'list'>('board');
-  const [assignee, setAssignee] = useState(can('tasks.view.all', 'tasks.view.team') ? '' : 'me');
+  const [assignee, setAssignee] = useState('');
   const [priority, setPriority] = useState('');
   const [search, setSearch] = useState('');
   const [due, setDue] = useState(sp.get('due') ?? '');
@@ -487,7 +533,7 @@ export default function Tasks() {
 
   return (
     <div className="min-w-0">
-      <PageHeader title="Tasks" subtitle="Plan, assign and review work. Drag cards between columns, or use Move on a card."
+      <PageHeader title="Tasks" subtitle={can('tasks.view.all') ? 'Plan, assign and review work. Drag cards between columns, or use Move on a card.' : 'Your tasks: the ones assigned to you and the ones you added. Drag cards between columns, or use Move on a card.'}
         actions={<Button onClick={() => setCreating(true)}><Plus className="h-4 w-4" />New task</Button>} />
       <div className="mb-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
         <div className="col-span-2 flex rounded-lg border border-slate-300 bg-surface p-0.5 sm:col-span-1">
@@ -498,10 +544,13 @@ export default function Tasks() {
           <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search title or PRS-12" className="pl-9" />
         </div>
-        <Select value={assignee} onChange={(e) => setAssignee(e.target.value)} className="w-full sm:w-44">
-          <option value="">Everyone</option><option value="me">Assigned to me</option><option value="unassigned">Unassigned</option>
-          {can('tasks.view.all', 'tasks.view.team') && dir.data?.filter((u) => u.id !== me?.id && (can('tasks.view.all') || sharesTeam(u, me?.teamIds))).map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
-        </Select>
+        {/* Only Admins and Super Admins see other people's tasks, so only they get the person filter. */}
+        {can('tasks.view.all') && (
+          <Select value={assignee} onChange={(e) => setAssignee(e.target.value)} className="w-full sm:w-44" aria-label="Whose tasks">
+            <option value="">Everyone</option><option value="me">Assigned to me</option><option value="unassigned">Unassigned</option>
+            {dir.data?.filter((u) => u.id !== me?.id).map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+          </Select>
+        )}
         <Select value={priority} onChange={(e) => setPriority(e.target.value)} className="w-full sm:w-36">
           <option value="">Any priority</option>
           {Object.entries(PRIORITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}

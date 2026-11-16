@@ -6,6 +6,8 @@ import {
   ArrowLeft, Briefcase, Building2, CalendarClock, FileText, Mail, MessageSquare, Paperclip, Pencil, Phone, Plus, Send, Trash2, User as UserIcon,
 } from 'lucide-react';
 import { api, errMsg } from '../lib/api';
+import { CreateTaskModal } from './Tasks';
+import { TASK_STATUS } from '../lib/format';
 import { useAuth } from '../lib/auth';
 import { useDirectory } from '../lib/hooks';
 import { PRIORITY, ago, fmtBytes, fmtDate, fmtDateTime, fmtPhone } from '../lib/format';
@@ -210,7 +212,8 @@ export function ClientDetail() {
         )}
       />
       <div className="grid gap-5 lg:grid-cols-3">
-        <Card title="Client details" className="lg:order-2">
+        <div className="space-y-5 lg:order-2">
+        <Card title="Client details">
           <dl className="space-y-2.5 p-4 text-sm">
             <Row icon={<UserIcon className="h-4 w-4" />} label="Contact">{c.contactName || '—'}</Row>
             <Row icon={<Mail className="h-4 w-4" />} label="Email">{c.email ? <a className="text-indigo-700 hover:underline" href={`mailto:${c.email}`}>{c.email}</a> : '—'}</Row>
@@ -219,7 +222,10 @@ export function ClientDetail() {
             {c.notes && <div className="border-t border-slate-100 pt-2.5"><p className="mb-1 text-xs font-medium uppercase text-slate-500">Notes</p><p className="whitespace-pre-wrap text-slate-700">{c.notes}</p></div>}
           </dl>
         </Card>
+        <WorkedOnBy clientId={id} works={c.works} />
+        </div>
         <div className="space-y-5 lg:col-span-2">
+          <ClientTasks clientId={id} clientName={c.name} />
           <Card title={`Open work (${open.length})`}>
             {open.length ? <WorkList items={open} /> : <Empty title="Nothing open" icon={<Briefcase className="h-8 w-8" />}>{manage ? 'Use "Post work" to give someone a job for this client.' : 'All your work for this client is done.'}</Empty>}
           </Card>
@@ -468,5 +474,72 @@ function EditWorkModal({ work, onClose }: { work: WorkDetail; onClose: () => voi
       <GroupField label="Posted to"><PeoplePicker value={f.assigneeIds} onChange={(assigneeIds) => setF({ ...f, assigneeIds })} /></GroupField>
       <ErrorBox error={m.error} />
     </Modal>
+  );
+}
+
+interface ClientTask {
+  id: string; key: string; title: string; status: string; dueAt: string | null; isOverdue: boolean; completedAt?: string | null;
+  assignee: Person | null; assignees?: { user: Person }[]; createdBy: Person;
+}
+const taskPeople = (t: ClientTask) => (t.assignees?.length ? t.assignees.map((a) => a.user) : t.assignee ? [t.assignee] : []);
+const useClientTasks = (clientId: string) =>
+  useQuery({ queryKey: ['tasks', 'client', clientId], queryFn: () => api.get<ClientTask[]>('/tasks', { clientId }) });
+
+/** Tasks done for this client. Each person sees the ones they are allowed to see. */
+function ClientTasks({ clientId, clientName }: { clientId: string; clientName: string }) {
+  const q = useClientTasks(clientId);
+  const [adding, setAdding] = useState(false);
+  const list = q.data ?? [];
+  const done = list.filter((x) => x.status === 'DONE').length;
+  return (
+    <Card title={q.data ? `Tasks (${list.length}${list.length ? `, ${done} done` : ''})` : 'Tasks'} actions={<Button size="sm" variant="secondary" onClick={() => setAdding(true)}>Add task</Button>}>
+      {q.isLoading ? <Spinner /> : !list.length ? (
+        <Empty title="No tasks for this client yet">Tick this client when adding a task, and it shows up here.</Empty>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {list.map((x) => (
+            <li key={x.id}>
+              <Link to={`/tasks?open=${x.id}`} className="flex flex-wrap items-center gap-2 px-4 py-2.5 text-sm hover:bg-slate-50">
+                <span className="font-mono text-xs text-slate-400">{x.key}</span>
+                <span className="min-w-0 flex-1 truncate font-medium text-slate-900">{x.title}</span>
+                <span className="flex -space-x-1.5">{taskPeople(x).slice(0, 4).map((p) => <span key={p.id} title={p.fullName}><Avatar name={p.fullName} size="sm" /></span>)}</span>
+                {x.dueAt && <span className={x.isOverdue ? 'text-xs font-medium text-rose-600' : 'text-xs text-slate-500'}>{fmtDate(x.dueAt)}</span>}
+                <Badge className={TASK_STATUS[x.status]?.color}>{TASK_STATUS[x.status]?.label ?? x.status}</Badge>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+      {adding && <CreateTaskModal open onClose={() => setAdding(false)} defaults={{ clientIds: [clientId], title: `${clientName}: ` }} />}
+    </Card>
+  );
+}
+
+/** Everyone who has worked for this client: on its tasks or its posted work. */
+function WorkedOnBy({ clientId, works }: { clientId: string; works: Work[] }) {
+  const q = useClientTasks(clientId);
+  const people = new Map<string, { person: Person; tasks: number; work: number }>();
+  const add = (p: Person, kind: 'tasks' | 'work') => {
+    const e = people.get(p.id) ?? { person: p, tasks: 0, work: 0 };
+    e[kind]++;
+    people.set(p.id, e);
+  };
+  for (const x of q.data ?? []) for (const p of taskPeople(x)) add(p, 'tasks');
+  for (const w of works) for (const a of w.assignees) add(a.user, 'work');
+  const list = [...people.values()].sort((a, b) => b.tasks + b.work - (a.tasks + a.work));
+  return (
+    <Card title={q.data ? `Worked on by (${list.length})` : 'Worked on by'}>
+      {!list.length ? <p className="px-4 py-3 text-sm text-slate-500">No one yet.</p> : (
+        <ul className="divide-y divide-slate-50">
+          {list.map((e) => (
+            <li key={e.person.id} className="flex items-center gap-2.5 px-4 py-2 text-sm">
+              <Avatar name={e.person.fullName} size="sm" />
+              <span className="flex-1 truncate text-slate-800">{e.person.fullName}</span>
+              <span className="text-xs text-slate-500">{[e.tasks && `${e.tasks} task${e.tasks > 1 ? 's' : ''}`, e.work && `${e.work} work item${e.work > 1 ? 's' : ''}`].filter(Boolean).join(' · ')}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }

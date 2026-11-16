@@ -24,6 +24,7 @@ class TaskQuery {
   @IsOptional() @IsString() assignee?: string; // "me" | "unassigned" | id
   @IsOptional() @IsUUID() teamId?: string;
   @IsOptional() @IsUUID() leadId?: string;
+  @IsOptional() @IsUUID() clientId?: string;
   @IsOptional() @Transform(toArray) @IsEnum(TaskStatus, { each: true }) status?: TaskStatus[];
   @IsOptional() @Transform(toArray) @IsEnum(TaskPriority, { each: true }) priority?: TaskPriority[];
   @IsOptional() @IsIn(['overdue', 'today', 'week']) due?: string;
@@ -37,6 +38,7 @@ class CreateTaskDto {
   /** Older single-assignee form; assigneeIds takes priority. */
   @IsOptional() @IsUUID() assigneeId?: string;
   @IsOptional() @IsArray() @ArrayMaxSize(20) @IsUUID('all', { each: true }) assigneeIds?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @IsUUID('all', { each: true }) clientIds?: string[];
   @IsOptional() @IsUUID() teamId?: string;
   @IsOptional() @IsUUID() leadId?: string;
   @IsOptional() @IsUUID() parentId?: string;
@@ -51,6 +53,7 @@ class UpdateTaskDto {
   @IsOptional() @IsString() @MaxLength(10000) description?: string | null;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() assigneeId?: string | null;
   @IsOptional() @IsArray() @ArrayMaxSize(20) @IsUUID('all', { each: true }) assigneeIds?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(50) @IsUUID('all', { each: true }) clientIds?: string[];
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() teamId?: string | null;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() leadId?: string | null;
   @IsOptional() @IsEnum(TaskPriority) priority?: TaskPriority;
@@ -84,9 +87,11 @@ class ChecklistUpdateDto {
 
 const person = { select: { id: true, fullName: true } } as const;
 const assigneesInclude = { include: { user: person }, orderBy: { createdAt: 'asc' } } as const;
+const clientsInclude = { include: { client: { select: { id: true, name: true } } }, orderBy: { createdAt: 'asc' } } as const;
 const listInclude = {
   assignee: person,
   assignees: assigneesInclude,
+  clients: clientsInclude,
   createdBy: person,
   team: { select: { id: true, name: true } },
   lead: { select: { id: true, fullName: true } },
@@ -110,27 +115,15 @@ export class TasksService {
     private storage: StorageService,
   ) {}
 
+  /** Tasks are private: you see the ones you are assigned to or created. Admins (tasks.view.all) see all. */
   private async visibleWhere(user: AuthUser): Promise<Prisma.TaskWhereInput> {
-    const s = this.access.scope(user, 'tasks.view');
-    if (s === 'all') return {};
-    const mine: Prisma.TaskWhereInput[] = [onTask(user.id), { createdById: user.id }];
-    if (s === 'team') {
-      const ids = await this.access.teamMemberIds(user);
-      mine.push({ assigneeId: { in: ids } }, { assignees: { some: { userId: { in: ids } } } }, { teamId: { in: user.teamIds } });
-    }
-    return { OR: mine };
+    if (user.permissions.has('tasks.view.all')) return {};
+    return { OR: [onTask(user.id), { createdById: user.id }] };
   }
 
   private async canManage(user: AuthUser, task: { createdById: string; assigneeId: string | null; teamId: string | null; assignees?: { userId: string }[] }) {
-    if (task.createdById === user.id) return true;
-    const s = this.access.scope(user, 'tasks.manage');
-    if (s === 'all') return true;
-    if (s === 'team') {
-      if (task.teamId && user.teamIds.includes(task.teamId)) return true;
-      const team = await this.access.teamMemberIds(user);
-      return peopleOn(task).some((id) => team.includes(id));
-    }
-    return false;
+    // The creator, or someone who can manage every task (Admin, Super Admin).
+    return task.createdById === user.id || user.permissions.has('tasks.manage.all');
   }
 
   private async load(user: AuthUser, id: string) {
@@ -154,13 +147,19 @@ export class TasksService {
     if (!user.permissions.has('tasks.create_for_others')) throw new ForbiddenException('You can only create tasks for yourself');
     const found = await this.prisma.user.count({ where: { id: { in: others }, isActive: true, deletedAt: null } });
     if (found !== others.length) throw new BadRequestException('One or more people are inactive or do not exist');
-    const s = this.access.scope(user, 'tasks.manage');
-    if (s === 'all') return;
-    if (s === 'team') {
-      const team = await this.access.teamMemberIds(user);
-      if (others.every((id) => team.includes(id))) return;
-    }
+    if (user.permissions.has('tasks.manage.all')) return;
+    const team = await this.access.teamMemberIds(user);
+    if (others.every((id) => team.includes(id))) return;
     throw new ForbiddenException('You can only assign tasks to members of your team');
+  }
+
+  /** Checks the clients exist; returns them without duplicates. */
+  private async validClients(ids?: string[]) {
+    const unique = [...new Set(ids ?? [])];
+    if (unique.length && (await this.prisma.client.count({ where: { id: { in: unique } } })) !== unique.length) {
+      throw new BadRequestException('One or more clients do not exist');
+    }
+    return unique;
   }
 
   /** The new assignee list from a request: assigneeIds, or the older single assigneeId. Undefined means unchanged. */
@@ -178,6 +177,7 @@ export class TasksService {
     if (q.createdByMe === 'true') and.push({ createdById: user.id });
     if (q.teamId) and.push({ teamId: q.teamId });
     if (q.leadId) and.push({ leadId: q.leadId });
+    if (q.clientId) and.push({ clients: { some: { clientId: q.clientId } } });
     if (q.status?.length) and.push({ status: { in: q.status } });
     if (q.priority?.length) and.push({ priority: { in: q.priority } });
     if (q.search) {
@@ -204,7 +204,7 @@ export class TasksService {
     const task = await this.prisma.task.findUniqueOrThrow({
       where: { id },
       include: {
-        assignee: person, assignees: assigneesInclude, createdBy: person, team: { select: { id: true, name: true } },
+        assignee: person, assignees: assigneesInclude, clients: clientsInclude, createdBy: person, team: { select: { id: true, name: true } },
         lead: { select: { id: true, fullName: true, phoneE164: true } },
         parent: { select: { id: true, number: true, title: true } },
         subtasks: { include: { assignee: person, assignees: assigneesInclude }, orderBy: { createdAt: 'asc' } },
@@ -232,12 +232,14 @@ export class TasksService {
       if (!canWork) throw new ForbiddenException('You cannot add subtasks here');
     }
     if (dto.leadId) await this.prisma.lead.findUniqueOrThrow({ where: { id: dto.leadId } });
+    const clientIds = await this.validClients(dto.clientIds);
     const max = await this.prisma.task.aggregate({ _max: { position: true }, where: { status: 'TODO' } });
     const task = await this.prisma.$transaction(async (tx) => {
       const t = await tx.task.create({
         data: {
           title: dto.title.trim(), description: dto.description, createdById: user.id, assigneeId: people[0] ?? null,
           assignees: { create: people.map((userId, i) => ({ userId, createdAt: new Date(Date.now() + i) })) },
+          clients: { create: clientIds.map((clientId, i) => ({ clientId, createdAt: new Date(Date.now() + i) })) },
           teamId: dto.teamId, leadId: dto.leadId, parentId: dto.parentId, priority: dto.priority ?? 'MEDIUM',
           startAt: dto.startAt ? new Date(dto.startAt) : null, dueAt: dto.dueAt ? new Date(dto.dueAt) : null,
           requiresReview: dto.requiresReview ?? false, position: (max._max.position ?? 0) + 1000,
@@ -257,7 +259,7 @@ export class TasksService {
 
   async update(user: AuthUser, id: string, dto: UpdateTaskDto) {
     const { task, people: before, canManage, canWork } = await this.load(user, id);
-    const managerFields: (keyof UpdateTaskDto)[] = ['assigneeId', 'assigneeIds', 'teamId', 'priority', 'dueAt', 'startAt', 'requiresReview', 'title'];
+    const managerFields: (keyof UpdateTaskDto)[] = ['assigneeId', 'assigneeIds', 'clientIds', 'teamId', 'priority', 'dueAt', 'startAt', 'requiresReview', 'title'];
     if (!canWork) throw new ForbiddenException('You cannot edit this task');
     if (!canManage && managerFields.some((f) => dto[f] !== undefined)) {
       throw new ForbiddenException('Only the task creator or a manager can change these fields');
@@ -275,6 +277,10 @@ export class TasksService {
     if (dto.title !== undefined) set('title', dto.title.trim(), task.title);
     if (dto.description !== undefined) data.description = dto.description;
     if (people && peopleChanged) { data.assigneeId = people[0] ?? null; changes.assignees = { from: before, to: people }; }
+    const clientIds = dto.clientIds !== undefined ? await this.validClients(dto.clientIds) : undefined;
+    const oldClients = clientIds ? (await this.prisma.taskClient.findMany({ where: { taskId: id }, select: { clientId: true } })).map((c) => c.clientId) : [];
+    const clientsChanged = !!clientIds && (clientIds.length !== oldClients.length || clientIds.some((c) => !oldClients.includes(c)));
+    if (clientsChanged) changes.clients = { from: oldClients, to: clientIds };
     if (dto.teamId !== undefined) set('teamId', dto.teamId, task.teamId);
     if (dto.leadId !== undefined) set('leadId', dto.leadId, task.leadId);
     if (dto.priority !== undefined) set('priority', dto.priority, task.priority);
@@ -289,6 +295,10 @@ export class TasksService {
           const createdAt = new Date(Date.now() + i);
           await tx.taskAssignee.upsert({ where: { taskId_userId: { taskId: id, userId } }, update: { createdAt }, create: { taskId: id, userId, createdAt } });
         }
+      }
+      if (clientIds && clientsChanged) {
+        await tx.taskClient.deleteMany({ where: { taskId: id, clientId: { notIn: clientIds } } });
+        await tx.taskClient.createMany({ data: clientIds.map((clientId) => ({ taskId: id, clientId })), skipDuplicates: true });
       }
       const t = await tx.task.update({ where: { id }, data });
       if (Object.keys(changes).length) await this.activity(tx, id, user.id, 'updated', changes);

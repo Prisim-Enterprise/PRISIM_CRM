@@ -440,6 +440,8 @@ model Task {
 
   /// Everyone working on the task. assigneeId mirrors the first of them, for reports and older screens.
   assignees   TaskAssignee[]
+  /// Clients this task was work for.
+  clients     TaskClient[]
   comments    TaskComment[]
   checklist   TaskChecklistItem[]
   attachments Attachment[]
@@ -449,6 +451,18 @@ model Task {
   @@index([teamId, status])
   @@index([status, dueAt])
   @@map("tasks")
+}
+
+model TaskClient {
+  taskId    String   @db.Uuid
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  clientId  String   @db.Uuid
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([taskId, clientId])
+  @@index([clientId])
+  @@map("task_clients")
 }
 
 model TaskAssignee {
@@ -594,6 +608,7 @@ model Client {
   works          ClientWork[]
   mediaItems     MediaItem[]
   postingPeriods PostingPeriod[]
+  tasks          TaskClient[]
   seoAccounts    SeoAccount[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
