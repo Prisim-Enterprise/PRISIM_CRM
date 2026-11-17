@@ -22,7 +22,14 @@ import Media from './pages/Media';
 import Seo from './pages/Seo';
 import TeamChat from './pages/TeamChat';
 import Reports from './pages/Reports';
-import Accounting from './pages/Accounting';
+import AccountingDashboard from './pages/accounting/Dashboard';
+import AccountingExpenses from './pages/accounting/Expenses';
+import AccountingApprovals from './pages/accounting/Approvals';
+import AccountingProjects, { ProjectPage as AccountingProject } from './pages/accounting/Projects';
+import AccountingInvoices, { InvoicePage as AccountingInvoice } from './pages/accounting/Invoices';
+import AccountingCategories from './pages/accounting/Categories';
+import AccountingReports from './pages/accounting/Reports';
+import AccountingSettings from './pages/accounting/Settings';
 import Quotations, { QuotationEditor } from './pages/Quotations';
 import Profile from './pages/Profile';
 import AdminUsers from './pages/admin/Users';
@@ -64,7 +71,18 @@ function App() {
         <Route path="chat" element={<TeamChat />} />
         <Route path="reports" element={<Reports />} />
         <Route path="accounting" element={<Navigate to="/accounting/dashboard" replace />} />
-        <Route path="accounting/:section" element={<Accounting />} />
+        <Route path="accounting/dashboard" element={<AccountingDashboard />} />
+        <Route path="accounting/expenses" element={<AccountingExpenses />} />
+        <Route path="accounting/approvals" element={<AccountingApprovals />} />
+        <Route path="accounting/projects" element={<AccountingProjects />} />
+        <Route path="accounting/projects/:id" element={<AccountingProject />} />
+        <Route path="accounting/invoices" element={<AccountingInvoices />} />
+        <Route path="accounting/invoices/:id" element={<AccountingInvoice />} />
+        <Route path="accounting/categories" element={<AccountingCategories />} />
+        <Route path="accounting/reports" element={<AccountingReports />} />
+        <Route path="accounting/settings" element={<AccountingSettings />} />
+        <Route path="accounting/quotations" element={<Navigate to="/quotations" replace />} />
+        <Route path="accounting/*" element={<Navigate to="/accounting/dashboard" replace />} />
         <Route path="quotations" element={<Quotations />} />
         <Route path="quotations/:id" element={<QuotationEditor />} />
         <Route path="mic" element={<Navigate to="/chat" replace />} />

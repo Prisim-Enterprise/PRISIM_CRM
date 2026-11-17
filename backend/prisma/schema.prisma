@@ -47,6 +47,10 @@ model User {
   tasksAssigned         Task[]               @relation("TaskAssignee")
   taskAssignments       TaskAssignee[]
   quotationsCreated     Quotation[]
+  acctExpensesSubmitted AcctExpense[]        @relation("AcctExpenseSubmitter")
+  acctExpensesReviewed  AcctExpense[]        @relation("AcctExpenseReviewer")
+  acctProjectsCreated   AcctProject[]        @relation("AcctProjectCreator")
+  acctInvoicesCreated   AcctInvoice[]        @relation("AcctInvoiceCreator")
   messagesSent          Message[]            @relation("MessageSender")
   messagesReceived      Message[]            @relation("MessageRecipient")
   messageReads          MessageRead[]
@@ -611,6 +615,8 @@ model Client {
   postingPeriods PostingPeriod[]
   tasks          TaskClient[]
   quotations     Quotation[]
+  acctProjects   AcctProject[]
+  acctInvoices   AcctInvoice[]
   seoAccounts    SeoAccount[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
@@ -1039,10 +1045,199 @@ model Quotation {
   notes        String?
   createdById  String          @db.Uuid
   createdBy    User            @relation(fields: [createdById], references: [id])
+  invoices     AcctInvoice[]
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 
   @@index([date])
   @@index([clientId])
   @@map("quotations")
+}
+
+// ───────────────────────── Accounting ─────────────────────────
+
+enum AcctExpenseStatus {
+  PENDING
+  APPROVED
+  PAID
+  REJECTED
+}
+
+enum AcctPaymentMethod {
+  BANK_TRANSFER
+  UPI
+  CASH
+  CARD
+  CHEQUE
+  OTHER
+}
+
+enum AcctProjectStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+/// Company details, invoice numbering and fiscal year. A single row (id 1).
+model AcctSettings {
+  id        Int      @id @default(1)
+  data      Json
+  updatedAt DateTime @updatedAt
+
+  @@map("acct_settings")
+}
+
+/// Expense categories; a category with a parent is a subcategory.
+model AcctCategory {
+  id            String         @id @default(uuid()) @db.Uuid
+  name          String
+  parentId      String?        @db.Uuid
+  parent        AcctCategory?  @relation("AcctCategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children      AcctCategory[] @relation("AcctCategoryTree")
+  monthlyBudget Decimal?       @db.Decimal(14, 2)
+  annualBudget  Decimal?       @db.Decimal(14, 2)
+  sortOrder     Int            @default(0)
+  archived      Boolean        @default(false)
+  expenses      AcctExpense[]
+  createdAt     DateTime       @default(now())
+
+  @@index([parentId])
+  @@map("acct_categories")
+}
+
+model AcctVendor {
+  id        String        @id @default(uuid()) @db.Uuid
+  name      String        @unique
+  phone     String?
+  email     String?
+  notes     String?
+  expenses  AcctExpense[]
+  createdAt DateTime      @default(now())
+
+  @@map("acct_vendors")
+}
+
+model AcctExpense {
+  id            String            @id @default(uuid()) @db.Uuid
+  amount        Decimal           @db.Decimal(14, 2)
+  dateIncurred  DateTime          @db.Date
+  datePaid      DateTime?         @db.Date
+  categoryId    String?           @db.Uuid
+  category      AcctCategory?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  vendorId      String?           @db.Uuid
+  vendor        AcctVendor?       @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  projectId     String?           @db.Uuid
+  project       AcctProject?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  paymentMethod AcctPaymentMethod @default(BANK_TRANSFER)
+  status        AcctExpenseStatus @default(PENDING)
+  description   String?
+  tags          String[]          @default([])
+  receiptKey    String?
+  receiptName   String?
+  receiptType   String?
+  submittedById String            @db.Uuid
+  submittedBy   User              @relation("AcctExpenseSubmitter", fields: [submittedById], references: [id])
+  reviewedById  String?           @db.Uuid
+  reviewedBy    User?             @relation("AcctExpenseReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt    DateTime?
+  reviewComment String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([dateIncurred])
+  @@index([status])
+  @@index([categoryId])
+  @@index([vendorId])
+  @@index([projectId])
+  @@index([submittedById])
+  @@map("acct_expenses")
+}
+
+/// A job for a CRM client: first meeting, shoot, payment.
+model AcctProject {
+  id           String               @id @default(uuid()) @db.Uuid
+  clientId     String               @db.Uuid
+  client       Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  title        String
+  meetingDate  DateTime?            @db.Date
+  shootStart   DateTime?            @db.Date
+  shootEnd     DateTime?            @db.Date
+  quotedAmount Decimal?             @db.Decimal(14, 2)
+  status       AcctProjectStatus    @default(ACTIVE)
+  notes        String?
+  createdById  String               @db.Uuid
+  createdBy    User                 @relation("AcctProjectCreator", fields: [createdById], references: [id])
+  payments     AcctProjectPayment[]
+  expenses     AcctExpense[]
+  invoices     AcctInvoice[]
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@index([clientId])
+  @@map("acct_projects")
+}
+
+/// Money received for a project outside an invoice (advance, balance and so on).
+model AcctProjectPayment {
+  id        String            @id @default(uuid()) @db.Uuid
+  projectId String            @db.Uuid
+  project   AcctProject       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  amount    Decimal           @db.Decimal(14, 2)
+  paidOn    DateTime          @db.Date
+  method    AcctPaymentMethod @default(BANK_TRANSFER)
+  note      String?
+  createdAt DateTime          @default(now())
+
+  @@index([projectId])
+  @@map("acct_project_payments")
+}
+
+model AcctInvoice {
+  id            String               @id @default(uuid()) @db.Uuid
+  /// e.g. PI-26-001
+  number        String               @unique
+  date          DateTime             @db.Date
+  dueDate       DateTime?            @db.Date
+  clientId      String?              @db.Uuid
+  client        Client?              @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientName    String
+  /// { contactPerson, phone, email, gstin, address }
+  clientDetails Json
+  /// [{ description, qty, rate }]
+  items         Json
+  discount      Decimal              @default(0) @db.Decimal(14, 2)
+  gstRate       Decimal              @default(18) @db.Decimal(5, 2)
+  /// Payment terms / notes printed on the invoice.
+  notes         String?
+  terms         Json
+  preparedBy    String?
+  quotationId   String?              @db.Uuid
+  quotation     Quotation?           @relation(fields: [quotationId], references: [id], onDelete: SetNull)
+  projectId     String?              @db.Uuid
+  project       AcctProject?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  cancelled     Boolean              @default(false)
+  payments      AcctInvoicePayment[]
+  createdById   String               @db.Uuid
+  createdBy     User                 @relation("AcctInvoiceCreator", fields: [createdById], references: [id])
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@index([date])
+  @@index([clientId])
+  @@index([projectId])
+  @@map("acct_invoices")
+}
+
+model AcctInvoicePayment {
+  id        String            @id @default(uuid()) @db.Uuid
+  invoiceId String            @db.Uuid
+  invoice   AcctInvoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amount    Decimal           @db.Decimal(14, 2)
+  paidOn    DateTime          @db.Date
+  method    AcctPaymentMethod @default(BANK_TRANSFER)
+  note      String?
+  createdAt DateTime          @default(now())
+
+  @@index([invoiceId])
+  @@map("acct_invoice_payments")
 }

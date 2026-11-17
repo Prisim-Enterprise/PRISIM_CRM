@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { format } from 'date-fns';
-import { ArrowLeft, Copy, FileText, Plus, Printer, Save, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Copy, FilePlus2, FileText, Plus, Printer, Save, Trash2, X } from 'lucide-react';
+import { useAuth } from '../lib/auth';
 import { toast } from 'sonner';
 import { api, errMsg } from '../lib/api';
 import { amountInWords, inr } from '../lib/money';
@@ -115,6 +116,7 @@ export function QuotationEditor() {
   const clients = useQuery({ queryKey: ['client-directory'], queryFn: () => api.get<{ id: string; name: string }[]>('/clients/directory'), staleTime: 60_000 });
   const [f, setF] = useState<Form | null>(null);
   const [saving, setSaving] = useState(false);
+  const { can } = useAuth();
 
   useEffect(() => {
     if (!isNew && existing.data && !f) setF(toForm(existing.data));
@@ -151,6 +153,12 @@ export function QuotationEditor() {
     try { await api.del(`/quotations/${id}`); qc.invalidateQueries({ queryKey: ['quotations'] }); toast.success('Deleted'); nav('/quotations'); }
     catch (e) { toast.error(errMsg(e)); }
   };
+  const makeInvoice = async () => {
+    if (JSON.stringify(toBody(toForm(existing.data!))) !== JSON.stringify(body) && !confirm('Save your changes first? The invoice is made from the saved quotation.')) return;
+    if (JSON.stringify(toBody(toForm(existing.data!))) !== JSON.stringify(body)) await save();
+    try { const inv = await api.post<{ id: string; number: string }>(`/accounting/invoices/from-quotation/${id}`); toast.success(`Invoice ${inv.number} created`); nav(`/accounting/invoices/${inv.id}`); }
+    catch (e) { toast.error(errMsg(e)); }
+  };
   const print = async () => {
     // Print what's on screen; save first so the printed copy and the saved one match.
     if (isNew || JSON.stringify(toBody(toForm(existing.data!))) !== JSON.stringify(body)) await save();
@@ -165,6 +173,7 @@ export function QuotationEditor() {
         <div className="ml-auto flex flex-wrap gap-2">
           {!isNew && <Button variant="ghost" className="text-rose-600 hover:bg-rose-50" onClick={remove}><Trash2 className="h-4 w-4" />Delete</Button>}
           {!isNew && <Button variant="secondary" onClick={duplicate}><Copy className="h-4 w-4" />Duplicate</Button>}
+          {!isNew && can('accounting.manage') && <Button variant="secondary" onClick={makeInvoice}><FilePlus2 className="h-4 w-4" />Create invoice</Button>}
           <Button variant="secondary" onClick={print}><Printer className="h-4 w-4" />Print / Save PDF</Button>
           <Button loading={saving} onClick={save}><Save className="h-4 w-4" />Save</Button>
         </div>

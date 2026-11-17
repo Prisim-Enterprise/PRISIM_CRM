@@ -44,6 +44,9 @@ export const PERMISSIONS = {
   'seo.manage': ['SEO', 'Add SEO clients and choose who handles them'],
   // Quotations
   'quotations.manage': ['Quotations', 'Create, edit and print quotations'],
+  // Accounting
+  'accounting.manage': ['Accounting', 'Full accounting: every section, approve expenses, invoices and settings'],
+  'accounting.expenses.submit': ['Accounting', 'Submit own expenses for approval'],
   // Reports
   'reports.view.all': ['Reports', 'View organisation-wide reports'],
   'reports.view.team': ['Reports', 'View team reports'],
@@ -71,7 +74,8 @@ export const DEFAULT_ROLES: { key: string; name: string; description: string; pe
     name: 'Admin / Manager',
     description: 'Manages leads, assignment, follow-ups, tasks, feedback and reports.',
     // Sees every client and update; posting client work stays with the Super Admin by default.
-    permissions: ALL_PERMISSIONS.filter((p) => p !== 'roles.manage' && p !== 'clients.manage'),
+    // Accounting stays with the Super Admin.
+    permissions: ALL_PERMISSIONS.filter((p) => p !== 'roles.manage' && p !== 'clients.manage' && !p.startsWith('accounting.')),
   },
   {
     key: 'team_leader',

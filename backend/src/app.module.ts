@@ -23,6 +23,7 @@ import { SeoModule } from './seo/seo';
 import { MessagesModule } from './messages/messages';
 import { PostingModule } from './clients/posting';
 import { QuotationsModule } from './quotations/quotations';
+import { AccountingModule } from './accounting/accounting';
 import { AuthModule } from './auth/auth';
 
 @Controller('health')
@@ -61,6 +62,7 @@ class HealthController {
     MessagesModule,
     PostingModule,
     QuotationsModule,
+    AccountingModule,
     JobsModule,
   ],
   controllers: [HealthController],

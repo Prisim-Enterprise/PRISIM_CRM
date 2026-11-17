@@ -102,12 +102,12 @@ function DesktopAlertsButton() {
   );
 }
 
-/** The Accounting app's sections, as a dropdown in the sidebar. Super Admins only. */
-export const ACCOUNTING_SECTIONS = [
+/** Accounting sections, as a dropdown in the sidebar. */
+export const ACCOUNTING_SECTIONS: { path: string; label: string; to?: string; perm?: string }[] = [
   { path: 'dashboard', label: 'Dashboard' },
-  { path: 'expenses', label: 'Expenses' },
+  { path: 'expenses', label: 'Expenses', perm: 'accounting.expenses.submit' },
   { path: 'projects', label: 'Clients & Projects' },
-  { path: 'quotations', label: 'Quotations', to: '/quotations' }, // The CRM's own, shared quotations
+  { path: 'quotations', label: 'Quotations', to: '/quotations', perm: 'quotations.manage' }, // The CRM's own, shared quotations
   { path: 'invoices', label: 'Invoices' },
   { path: 'categories', label: 'Categories & Budgets' },
   { path: 'reports', label: 'Reports' },
@@ -116,6 +116,10 @@ export const ACCOUNTING_SECTIONS = [
 ];
 
 function AccountingMenu({ onNavigate }: { onNavigate: () => void }) {
+  const { can } = useAuth();
+  const full = can('accounting.manage');
+  // Full access sees every section; "submit expenses" alone sees Expenses.
+  const sections = ACCOUNTING_SECTIONS.filter((s) => (full ? !s.perm || s.perm !== 'quotations.manage' || can('quotations.manage') : s.perm === 'accounting.expenses.submit'));
   const loc = useLocation();
   const inside = loc.pathname.startsWith('/accounting');
   const [open, setOpen] = useState(inside);
@@ -129,7 +133,7 @@ function AccountingMenu({ onNavigate }: { onNavigate: () => void }) {
       </button>
       {open && (
         <div className="ml-[22px] mt-0.5 space-y-0.5 border-l border-slate-300 pl-3">
-          {ACCOUNTING_SECTIONS.map((s) => (
+          {sections.map((s) => (
             <NavLink key={s.path} to={s.to ?? `/accounting/${s.path}`} onClick={onNavigate}
               className={({ isActive }) => clsx('block rounded-md px-2.5 py-1.5 text-[13px] transition', isActive ? 'bg-surface font-medium text-slate-900 shadow-card' : 'text-slate-600 hover:bg-white/60 hover:text-slate-900')}>
               {s.label}
@@ -189,7 +193,7 @@ export default function Layout() {
       </NavLink>
       <nav className="scroll-thin flex-1 space-y-1 overflow-y-auto px-3">
         {main.map(link)}
-        {me?.roles.includes('super_admin') && <AccountingMenu onNavigate={() => setMobileOpen(false)} />}
+        {can('accounting.manage', 'accounting.expenses.submit') && <AccountingMenu onNavigate={() => setMobileOpen(false)} />}
         {admin.length > 0 && <p className="px-3 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Administration</p>}
         {admin.map(link)}
       </nav>
