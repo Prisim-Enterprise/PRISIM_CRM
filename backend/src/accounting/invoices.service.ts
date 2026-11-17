@@ -181,7 +181,7 @@ export class InvoicesService {
   async uploadClientInvoiceFile(u: AuthUser, clientId: string, file?: Express.Multer.File) {
     await this.assertClient(clientId);
     if (!file?.buffer?.length) throw new BadRequestException('No invoice file uploaded');
-    if (file.size > MAX_INVOICE_FILE_BYTES) throw new BadRequestException('Invoice files can be up to 25 MB');
+    if (file.buffer.length > MAX_INVOICE_FILE_BYTES) throw new BadRequestException('Invoice files must be 1 MB or smaller. Upload it from the Invoices page, which compresses it for you.');
     const mimeType = sniffType(file.buffer);
     if (!mimeType || !INVOICE_FILE_TYPES.includes(mimeType)) throw new BadRequestException('Invoices must be a PDF, PNG, JPG or WebP file');
     const stored = compressForStorage(file.buffer);

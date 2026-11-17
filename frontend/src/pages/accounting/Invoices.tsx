@@ -6,6 +6,7 @@ import { format } from 'date-fns';
 import { ArrowLeft, Ban, FileText, Plus, Printer, RotateCcw, Save, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errMsg } from '../../lib/api';
+import { compressInvoiceUpload } from '../../lib/compressUpload';
 import { useAuth } from '../../lib/auth';
 import { Badge, Button, Card, Empty, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, StatCard, Table, Td, Textarea, Th } from '../../components/ui';
 import {
@@ -23,40 +24,6 @@ const fileSize = (bytes: number) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFi
 interface InvoiceFile {
   /** sizeBytes is what is stored (after compression); originalBytes is what was uploaded. */
   id: string; clientId: string; fileName: string; mimeType: string; sizeBytes: number; originalBytes: number; encoding: string | null; createdAt: string;
-}
-
-/** Longest side kept for photos and scans: about 210 dpi on an A4 page, so small print stays legible. */
-const MAX_IMAGE_SIDE = 1800;
-
-/**
- * Shrinks invoice photos and scans before upload: resized to MAX_IMAGE_SIDE and saved as
- * WebP or JPEG, whichever is smaller. PDFs are sent as they are; the server gzips them when that helps.
- */
-async function compressInvoiceFile(file: File): Promise<File> {
-  if (file.type === 'application/pdf') return file;
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('Choose a PDF, PNG, JPG or WebP invoice');
-
-  const image = await createImageBitmap(file);
-  const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(image.width, image.height));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(image.width * scale));
-  canvas.height = Math.max(1, Math.round(image.height * scale));
-  const context = canvas.getContext('2d');
-  if (!context) { image.close(); throw new Error('This image could not be compressed'); }
-  context.fillStyle = '#fff';
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  image.close();
-
-  const encode = (type: string, quality: number) => new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality));
-  // Browsers that can't write WebP hand back a PNG instead; that is dropped below.
-  const candidates = (await Promise.all([encode('image/webp', 0.8), encode('image/jpeg', 0.8)]))
-    .filter((b): b is Blob => !!b && (b.type === 'image/webp' || b.type === 'image/jpeg'));
-  if (!candidates.length) throw new Error('This image could not be compressed');
-  const best = candidates.reduce((a, b) => (b.size < a.size ? b : a));
-  if (best.size >= file.size) return file;
-  const name = file.name.replace(/\.[^.]+$/, '') || 'invoice';
-  return new File([best], `${name}.${best.type === 'image/webp' ? 'webp' : 'jpg'}`, { type: best.type, lastModified: Date.now() });
 }
 
 /** "1.2 MB" or "1.2 MB (was 3.4 MB)" when compression saved space. */
@@ -102,6 +69,7 @@ function InvoicesPage() {
   const [clientId, setClientId] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [compressing, setCompressing] = useState(false);
+  const [prepNote, setPrepNote] = useState('');
   const [uploading, setUploading] = useState(false);
   const qc = useQueryClient();
   const clients = useQuery({ queryKey: ['client-directory'], queryFn: () => api.get<{ id: string; name: string }[]>('/clients/directory'), staleTime: 60_000 });
@@ -113,16 +81,20 @@ function InvoicesPage() {
   const base = (search || status ? all.data : q.data) ?? [];
   const live = base.filter((i) => !i.cancelled);
   const list = q.data ?? [];
-  const closeUpload = () => { if (!uploading) { setUploadOpen(false); setClientId(''); setFile(null); } };
+  const closeUpload = () => { if (!uploading) { setUploadOpen(false); setClientId(''); setFile(null); setPrepNote(''); } };
   const chooseFile = async (selected: File | undefined) => {
-    setFile(null);
+    setFile(null); setPrepNote('');
     if (!selected) return;
     setCompressing(true);
     try {
-      const prepared = await compressInvoiceFile(selected);
-      if (prepared.size > 25 * 1024 * 1024) throw new Error('Invoice files can be up to 25 MB after compression');
+      // Any size can be picked; it is shrunk here to 1 MB or less before upload.
+      const { file: prepared, originalBytes, method } = await compressInvoiceUpload(selected);
       setFile(prepared);
-      toast.success(prepared.size < selected.size ? `Image compressed from ${fileSize(selected.size)} to ${fileSize(prepared.size)}` : 'File is ready to upload');
+      const note = method === 'unchanged' ? 'already under 1 MB, sent as it is'
+        : method === 'pdf-pages-as-images' ? `compressed from ${fileSize(originalBytes)}; pages saved as images, so the text can't be selected`
+        : `compressed from ${fileSize(originalBytes)}`;
+      setPrepNote(note);
+      toast.success(`Ready: ${fileSize(prepared.size)} (${note})`);
     } catch (e) { toast.error(errMsg(e)); } finally { setCompressing(false); }
   };
   const uploadFile = async () => {
@@ -132,7 +104,7 @@ function InvoicesPage() {
       const saved = await api.upload<InvoiceFile>(`/accounting/invoice-files/${clientId}`, file);
       await qc.invalidateQueries({ queryKey: ['acct-invoice-files', clientId] });
       toast.success(saved.originalBytes > saved.sizeBytes ? `Invoice uploaded · stored as ${storedSize(saved)}` : 'Invoice uploaded');
-      setFile(null);
+      setFile(null); setPrepNote('');
     } catch (e) { toast.error(errMsg(e)); } finally { setUploading(false); }
   };
   const openFile = async (invoiceFile: InvoiceFile) => {
@@ -199,11 +171,11 @@ function InvoicesPage() {
             {(clients.data ?? []).map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
           </Select>
         </Field>
-        <Field label="Invoice file" hint="PDF, PNG, JPG or WebP, up to 25 MB. Photos are resized and compressed before upload; PDFs are compressed on the server when that saves space.">
+        <Field label="Invoice file" hint="PDF, PNG, JPG or WebP of any size. It is compressed to 1 MB or less before upload.">
           <Input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" disabled={!clientId || compressing || uploading} onChange={(e) => { void chooseFile(e.target.files?.[0]); e.target.value = ''; }} />
         </Field>
-        {compressing && <p className="text-sm text-slate-500">Compressing image…</p>}
-        {file && <p className="text-sm text-slate-600">Ready: {file.name} · {fileSize(file.size)}</p>}
+        {compressing && <p className="text-sm text-slate-500">Compressing to 1 MB or less… large PDFs can take a few seconds.</p>}
+        {file && <p className="text-sm text-slate-600">Ready: {file.name} · {fileSize(file.size)}{prepNote && ` · ${prepNote}`}</p>}
         {clientId && <section>
           <h3 className="mb-2 text-sm font-semibold">Uploaded invoices</h3>
           {clientFiles.isLoading ? <Spinner /> : clientFiles.error ? <ErrorBox error={clientFiles.error} /> : !clientFiles.data?.length ? <p className="text-sm text-slate-500">No invoice files for this client yet.</p> : (

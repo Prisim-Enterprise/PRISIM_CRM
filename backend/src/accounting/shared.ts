@@ -27,7 +27,8 @@ export const csvList = ({ value }: { value: unknown }) =>
 export const RECEIPT_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
 export const MAX_RECEIPT_BYTES = 10 * 1024 * 1024;
 export const INVOICE_FILE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
-export const MAX_INVOICE_FILE_BYTES = 25 * 1024 * 1024;
+/** Client invoice files: the web app compresses any file down to this before upload; the server refuses anything bigger. */
+export const MAX_INVOICE_FILE_BYTES = 1024 * 1024;
 
 export const isManager = (u: Pick<AuthUser, 'permissions'>) => u.permissions.has(MANAGE);
 export function assertCanSubmit(u: Pick<AuthUser, 'permissions'>) {
