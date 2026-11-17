@@ -40,11 +40,17 @@ export interface Project {
 }
 export interface ProjectDetail extends Project { payments: Payment[]; expenses: Expense[]; invoices: Invoice[]; createdBy: Person }
 
-export interface InvoiceItem { description: string; qty: number; rate: number }
-export interface ClientDetails { contactPerson: string; phone: string; email: string; gstin: string; address: string }
+export interface InvoiceItem { description: string; hsn?: string; qty: number; unit?: string; rate: number }
+export interface ClientDetails { contactPerson: string; phone: string; email: string; gstin: string; address: string; stateCode?: string }
+export interface InvoiceExtra {
+  deliveryNote?: string; referenceNo?: string; otherReferences?: string; buyerOrderNo?: string; buyerOrderDate?: string;
+  dispatchDocNo?: string; deliveryNoteDate?: string; dispatchedThrough?: string; destination?: string; termsOfDelivery?: string;
+}
+export interface ShipTo { name: string; address: string; gstin: string; stateCode: string }
 export interface Invoice {
   id: string; number: string; date: string; dueDate: string | null; clientId: string | null; clientName: string; clientDetails: ClientDetails;
   items: InvoiceItem[]; gstRate: number; notes: string | null; terms: string[]; preparedBy: string | null; cancelled: boolean;
+  extra: InvoiceExtra | null; shipTo: ShipTo | null;
   project: { id: string; title: string } | null; projectId: string | null; quotation: { id: string; number: string } | null; payments: Payment[];
   subtotal: number; discount: number; taxable: number; split: 'igst' | 'cgst_sgst'; cgst: number; sgst: number; igst: number; gst: number;
   total: number; paid: number; balance: number; status: InvoiceStatus; createdBy: Person;
@@ -53,8 +59,23 @@ export interface Invoice {
 export interface Settings {
   companyName: string; tagline: string; address: string; phone: string; email: string; website: string; gstin: string; stateCode: string;
   bank: { accountName: string; accountNumber: string; ifsc: string; bankName: string; upiId: string };
-  invoicePrefix: string; invoiceDueDays: number; fyStartMonth: number; invoiceTerms: string[];
+  invoicePrefix: string; invoiceDueDays: number; fyStartMonth: number; invoiceTerms: string[]; defaultHsn: string;
 }
+
+/** GST state codes (the first two digits of a GSTIN). */
+export const GST_STATES: Record<string, string> = {
+  '01': 'Jammu & Kashmir', '02': 'Himachal Pradesh', '03': 'Punjab', '04': 'Chandigarh', '05': 'Uttarakhand', '06': 'Haryana', '07': 'Delhi',
+  '08': 'Rajasthan', '09': 'Uttar Pradesh', '10': 'Bihar', '11': 'Sikkim', '12': 'Arunachal Pradesh', '13': 'Nagaland', '14': 'Manipur',
+  '15': 'Mizoram', '16': 'Tripura', '17': 'Meghalaya', '18': 'Assam', '19': 'West Bengal', '20': 'Jharkhand', '21': 'Odisha',
+  '22': 'Chhattisgarh', '23': 'Madhya Pradesh', '24': 'Gujarat', '26': 'Dadra & Nagar Haveli and Daman & Diu', '27': 'Maharashtra',
+  '29': 'Karnataka', '30': 'Goa', '31': 'Lakshadweep', '32': 'Kerala', '33': 'Tamil Nadu', '34': 'Puducherry',
+  '35': 'Andaman & Nicobar Islands', '36': 'Telangana', '37': 'Andhra Pradesh', '38': 'Ladakh', '97': 'Other Territory',
+};
+/** State code from a GSTIN, else the one picked. */
+export const stateOf = (gstin: string | undefined, picked?: string) => {
+  const g = (gstin ?? '').trim().slice(0, 2);
+  return /^\d{2}$/.test(g) ? g : picked ?? '';
+};
 
 export interface Ledger {
   fyStartMonth: number;

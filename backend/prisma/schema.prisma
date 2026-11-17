@@ -1207,8 +1207,12 @@ model AcctInvoice {
   items         Json
   discount      Decimal              @default(0) @db.Decimal(14, 2)
   gstRate       Decimal              @default(18) @db.Decimal(5, 2)
-  /// Payment terms / notes printed on the invoice.
+  /// Mode / terms of payment, printed in the invoice header.
   notes         String?
+  /// Header boxes: { deliveryNote, referenceNo, otherReferences, buyerOrderNo, buyerOrderDate, dispatchDocNo, deliveryNoteDate, dispatchedThrough, destination, termsOfDelivery }
+  extra         Json?
+  /// Consignee (ship to) when different from the buyer: { name, address, gstin, stateCode }
+  shipTo        Json?
   terms         Json
   preparedBy    String?
   quotationId   String?              @db.Uuid

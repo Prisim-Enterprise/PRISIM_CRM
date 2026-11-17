@@ -5,7 +5,7 @@ import { Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errMsg } from '../../lib/api';
 import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Textarea } from '../../components/ui';
-import { AccountingGate, MONTHS, Settings, useSettings } from './shared';
+import { AccountingGate, GST_STATES, MONTHS, Settings, useSettings } from './shared';
 
 export default function AccountingSettings() {
   return <AccountingGate><SettingsPage /></AccountingGate>;
@@ -43,7 +43,7 @@ function SettingsPage() {
         <div className="grid gap-3 p-4 sm:grid-cols-2">
           <Field label="Company name"><Input value={f.companyName} onChange={(e) => set({ companyName: e.target.value })} /></Field>
           <Field label="Tagline"><Input value={f.tagline} onChange={(e) => set({ tagline: e.target.value })} /></Field>
-          <Field label="Address" className="sm:col-span-2"><Textarea rows={2} value={f.address} onChange={(e) => set({ address: e.target.value })} /></Field>
+          <Field label="Address" hint="Printed line by line, as typed." className="sm:col-span-2"><Textarea rows={3} value={f.address} onChange={(e) => set({ address: e.target.value })} /></Field>
           <Field label="Phone"><Input value={f.phone} onChange={(e) => set({ phone: e.target.value })} /></Field>
           <Field label="Email"><Input value={f.email} onChange={(e) => set({ email: e.target.value })} /></Field>
           <Field label="Website"><Input value={f.website} onChange={(e) => set({ website: e.target.value })} /></Field>
@@ -51,15 +51,16 @@ function SettingsPage() {
       </Card>
       <Card title="GST">
         <div className="grid gap-3 p-4 sm:grid-cols-2">
-          <Field label="Your GSTIN" hint="Leave empty until registered. With a GSTIN, invoices print as “TAX INVOICE”.">
+          <Field label="Your GSTIN/UIN">
             <Input value={f.gstin} maxLength={15} onChange={(e) => set({ gstin: e.target.value.toUpperCase() })} placeholder="29XXXXX0000X1Z5" />
           </Field>
-          <Field label="State code" hint="First two digits of a GSTIN; Karnataka is 29. Clients from another state are charged IGST, others CGST + SGST.">
-            <Input value={f.stateCode} maxLength={2} onChange={(e) => set({ stateCode: e.target.value.replace(/\D/g, '') })} className="w-24" />
+          <Field label="State" hint="Buyers in another state are charged IGST, others CGST + SGST.">
+            <Select value={f.stateCode} onChange={(e) => set({ stateCode: e.target.value })}>{Object.entries(GST_STATES).map(([c, n]) => <option key={c} value={c}>{n} ({c})</option>)}</Select>
           </Field>
+          <Field label="Default HSN/SAC" hint="Filled in on new invoice lines. 998365 is advertising services."><Input value={f.defaultHsn} maxLength={10} onChange={(e) => set({ defaultHsn: e.target.value.replace(/[^0-9A-Za-z]/g, '') })} className="w-40" /></Field>
         </div>
       </Card>
-      <Card title="Bank details (printed on invoices)">
+      <Card title="Company's bank details (printed on invoices when filled in)">
         <div className="grid gap-3 p-4 sm:grid-cols-2">
           <Field label="Account name"><Input value={f.bank.accountName} onChange={(e) => bank({ accountName: e.target.value })} /></Field>
           <Field label="Account number"><Input value={f.bank.accountNumber} onChange={(e) => bank({ accountNumber: e.target.value })} /></Field>
@@ -70,12 +71,12 @@ function SettingsPage() {
       </Card>
       <Card title="Invoices & financial year">
         <div className="grid gap-3 p-4 sm:grid-cols-3">
-          <Field label="Invoice number prefix" hint={`Numbers look like ${f.invoicePrefix || 'PI'}-26-001`}><Input value={f.invoicePrefix} maxLength={8} onChange={(e) => set({ invoicePrefix: e.target.value.replace(/[^A-Za-z0-9]/g, '') })} /></Field>
+          <Field label="Invoice number prefix (optional)" hint={`Numbers look like ${f.invoicePrefix ? `${f.invoicePrefix}/` : ''}2026-27/12`}><Input value={f.invoicePrefix} maxLength={8} onChange={(e) => set({ invoicePrefix: e.target.value.replace(/[^A-Za-z0-9]/g, '') })} /></Field>
           <Field label="Payment due after (days)"><Input type="number" min={0} max={365} value={f.invoiceDueDays} onChange={(e) => set({ invoiceDueDays: Number(e.target.value) })} /></Field>
           <Field label="Financial year starts in">
             <Select value={f.fyStartMonth} onChange={(e) => set({ fyStartMonth: Number(e.target.value) })}>{MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}</Select>
           </Field>
-          <Field label="Default invoice terms & conditions" hint="One per line. Each new invoice starts with these, and they can be edited per invoice." className="sm:col-span-3">
+          <Field label="Default declaration / terms (optional)" hint="One per line, printed beside the signature. Each new invoice starts with these." className="sm:col-span-3">
             <Textarea rows={7} value={f.invoiceTerms} onChange={(e) => set({ invoiceTerms: e.target.value })} />
           </Field>
         </div>

@@ -49,29 +49,26 @@ export interface AcctSettingsData {
   gstin: string; stateCode: string;
   bank: { accountName: string; accountNumber: string; ifsc: string; bankName: string; upiId: string };
   invoicePrefix: string; invoiceDueDays: number; fyStartMonth: number; invoiceTerms: string[];
+  /** HSN/SAC filled in on new invoice lines (998365: advertising services). */
+  defaultHsn: string;
 }
 
 export const DEFAULT_SETTINGS: AcctSettingsData = {
-  companyName: 'PRISIM',
+  // As on Prisim's tax invoice.
+  companyName: 'Prisim',
   tagline: 'Digital Marketing | Advertising | Lead Generation | Business Growth | Software Development',
-  address: '#18, 3rd Floor, Ramachandra Arcade, Opp. Ramaiah College Bus Stop, MSR Road, Mathikere, Bangalore - 560054',
+  address: 'No.21, Ramachandra Arcad\n3rd Floor, MSRE Road\nBangalore - 560 054.',
   phone: '9742502964',
-  email: 'info@prisim.co.in',
+  email: 'varuncena12@gmail.com',
   website: 'www.prisim.co.in',
-  gstin: '',
+  gstin: '29CROPV8759A1ZX',
   stateCode: '29',
   bank: { accountName: '', accountNumber: '', ifsc: '', bankName: '', upiId: '' },
-  invoicePrefix: 'PI',
+  invoicePrefix: '',
   invoiceDueDays: 15,
   fyStartMonth: 4,
-  invoiceTerms: [
-    'Payment is due on or before the due date mentioned on this invoice.',
-    'Please mention the invoice number when making the payment.',
-    'Services may be paused if payments are not received by the due date.',
-    'Advertising budget (Meta / Google ad spend) is billed separately and is not part of this invoice unless listed above.',
-    'Payments once made are non-refundable.',
-    'Subject to Bangalore jurisdiction.',
-  ],
+  invoiceTerms: [],
+  defaultHsn: '998365',
 };
 
 class BankDto {
@@ -92,7 +89,8 @@ class SettingsDto {
   @Matches(/^$|^[0-9A-Z]{15}$/, { message: 'GSTIN is 15 letters and numbers' }) gstin: string;
   @Matches(/^\d{2}$/, { message: 'State code is two digits (Karnataka is 29)' }) stateCode: string;
   @ValidateNested() @Type(() => BankDto) bank: BankDto;
-  @Matches(/^[A-Za-z0-9]{1,8}$/, { message: 'Invoice prefix: up to 8 letters or numbers' }) invoicePrefix: string;
+  @Matches(/^[A-Za-z0-9]{0,8}$/, { message: 'Invoice prefix: up to 8 letters or numbers' }) invoicePrefix: string;
+  @Matches(/^[0-9A-Za-z]{0,10}$/, { message: 'HSN/SAC is up to 10 letters or numbers' }) defaultHsn: string;
   @Type(() => Number) @IsInt() @Min(0) @Max(365) invoiceDueDays: number;
   @Type(() => Number) @IsInt() @Min(1) @Max(12) fyStartMonth: number;
   @IsArray() @ArrayMaxSize(30) @IsString({ each: true }) @MaxLength(600, { each: true }) invoiceTerms: string[];
@@ -215,8 +213,28 @@ class PaymentDto {
 
 class InvoiceItemDto {
   @IsString() @MinLength(1) @MaxLength(1000) description: string;
+  @IsOptional() @Matches(/^[0-9A-Za-z]{0,10}$/, { message: 'HSN/SAC is up to 10 letters or numbers' }) hsn?: string;
   @IsNumber({ maxDecimalPlaces: 3 }) @Min(0) @Max(1_000_000) qty: number;
+  @IsOptional() @IsString() @MaxLength(15) unit?: string;
   @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(9_999_999_999) rate: number;
+}
+class InvoiceExtraDto {
+  @IsOptional() @IsString() @MaxLength(120) deliveryNote?: string;
+  @IsOptional() @IsString() @MaxLength(120) referenceNo?: string;
+  @IsOptional() @IsString() @MaxLength(120) otherReferences?: string;
+  @IsOptional() @IsString() @MaxLength(120) buyerOrderNo?: string;
+  @IsOptional() @IsString() @MaxLength(40) buyerOrderDate?: string;
+  @IsOptional() @IsString() @MaxLength(120) dispatchDocNo?: string;
+  @IsOptional() @IsString() @MaxLength(40) deliveryNoteDate?: string;
+  @IsOptional() @IsString() @MaxLength(120) dispatchedThrough?: string;
+  @IsOptional() @IsString() @MaxLength(120) destination?: string;
+  @IsOptional() @IsString() @MaxLength(300) termsOfDelivery?: string;
+}
+class ShipToDto {
+  @IsString() @MinLength(2) @MaxLength(200) name: string;
+  @IsOptional() @IsString() @MaxLength(600) address?: string;
+  @IsOptional() @Matches(/^$|^[0-9A-Za-z]{15}$/, { message: 'Consignee GSTIN is 15 letters and numbers' }) gstin?: string;
+  @IsOptional() @Matches(/^$|^\d{2}$/) stateCode?: string;
 }
 class ClientDetailsDto {
   @IsOptional() @IsString() @MaxLength(120) contactPerson?: string;
@@ -224,6 +242,8 @@ class ClientDetailsDto {
   @IsOptional() @ValidateIf((_, v) => !!v) @IsEmail() @MaxLength(160) email?: string;
   @IsOptional() @Matches(/^$|^[0-9A-Za-z]{15}$/, { message: 'Client GSTIN is 15 letters and numbers' }) gstin?: string;
   @IsOptional() @IsString() @MaxLength(600) address?: string;
+  /** GST state code of the buyer when there's no GSTIN to read it from. */
+  @IsOptional() @Matches(/^$|^\d{2}$/) stateCode?: string;
 }
 class InvoiceDto {
   @IsOptional() @Matches(/^[A-Za-z0-9/_-]{1,30}$/, { message: 'Invoice number can use letters, numbers and / - _' }) number?: string;
@@ -240,6 +260,8 @@ class InvoiceDto {
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(120) preparedBy?: string | null;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() projectId?: string | null;
   @IsOptional() @IsBoolean() cancelled?: boolean;
+  @IsOptional() @ValidateNested() @Type(() => InvoiceExtraDto) extra?: InvoiceExtraDto;
+  @IsOptional() @ValidateIf((_, v) => v !== null) @ValidateNested() @Type(() => ShipToDto) shipTo?: ShipToDto | null;
 }
 class UpdateInvoiceDto {
   @IsOptional() @Matches(/^[A-Za-z0-9/_-]{1,30}$/, { message: 'Invoice number can use letters, numbers and / - _' }) number?: string;
@@ -256,6 +278,8 @@ class UpdateInvoiceDto {
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(120) preparedBy?: string | null;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() projectId?: string | null;
   @IsOptional() @IsBoolean() cancelled?: boolean;
+  @IsOptional() @ValidateNested() @Type(() => InvoiceExtraDto) extra?: InvoiceExtraDto;
+  @IsOptional() @ValidateIf((_, v) => v !== null) @ValidateNested() @Type(() => ShipToDto) shipTo?: ShipToDto | null;
 }
 class InvoiceQuery {
   @IsOptional() @IsString() @MaxLength(100) search?: string;
@@ -270,15 +294,16 @@ class LedgerQuery {
   @IsDateString() to: string;
 }
 
-type InvoiceItem = { description: string; qty: number; rate: number };
-type ClientDetails = { contactPerson?: string; phone?: string; email?: string; gstin?: string; address?: string };
+type InvoiceItem = { description: string; hsn?: string; qty: number; unit?: string; rate: number };
+type ClientDetails = { contactPerson?: string; phone?: string; email?: string; gstin?: string; address?: string; stateCode?: string };
 
 /** Totals for an invoice. Inside the company's state: CGST + SGST; another state (by GSTIN): IGST. */
 export function invoiceTotals(inv: { items: InvoiceItem[]; discount: number; gstRate: number; clientDetails: ClientDetails }, stateCode: string, paid: number) {
   const subtotal = r2(inv.items.reduce((s, i) => s + (Number(i.qty) || 0) * (Number(i.rate) || 0), 0));
   const discount = Math.min(subtotal, Math.max(0, r2(Number(inv.discount) || 0)));
   const taxable = r2(subtotal - discount);
-  const clientState = (inv.clientDetails.gstin ?? '').trim().slice(0, 2);
+  const fromGstin = (inv.clientDetails.gstin ?? '').trim().slice(0, 2);
+  const clientState = /^\d{2}$/.test(fromGstin) ? fromGstin : (inv.clientDetails.stateCode ?? '');
   const igst = /^\d{2}$/.test(clientState) && clientState !== stateCode;
   const rate = Number(inv.gstRate) || 0;
   const half = igst ? 0 : r2((taxable * rate) / 200);
@@ -288,10 +313,11 @@ export function invoiceTotals(inv: { items: InvoiceItem[]; discount: number; gst
   return { subtotal, discount, taxable, split: igst ? 'igst' : 'cgst_sgst', cgst: half, sgst: half, igst: igstAmt, gst, total, paid: r2(paid), balance: r2(Math.max(0, total - paid)) };
 }
 
-/** Indian financial year, short: Sep 2026 → "26" (FY 2026-27), Feb 2027 → "26". */
-const fyShort = (isoDate: string, fyStart: number) => {
+/** Financial year label: Nov 2026 → "2026-27", Feb 2027 → "2026-27". */
+const fyLabel = (isoDate: string, fyStart: number) => {
   const [y, m] = isoDate.split('-').map(Number);
-  return String((m >= fyStart ? y : y - 1) % 100).padStart(2, '0');
+  const start = m >= fyStart ? y : y - 1;
+  return fyStart === 1 ? String(start) : `${start}-${String((start + 1) % 100).padStart(2, '0')}`;
 };
 
 const person = { select: { id: true, fullName: true } } as const;
@@ -800,10 +826,10 @@ export class AccountingService {
 
   async nextInvoiceNumber(date = today()) {
     const s = await this.settings();
-    const prefix = `${s.invoicePrefix}-${fyShort(date, s.fyStartMonth)}-`;
+    const prefix = `${s.invoicePrefix ? `${s.invoicePrefix}/` : ''}${fyLabel(date, s.fyStartMonth)}/`;
     const rows = await this.prisma.acctInvoice.findMany({ where: { number: { startsWith: prefix } }, select: { number: true } });
-    const max = Math.max(0, ...rows.map((r) => Number(r.number.slice(prefix.length))).filter((n) => Number.isFinite(n)));
-    return { number: `${prefix}${String(max + 1).padStart(3, '0')}` };
+    const max = Math.max(0, ...rows.map((r) => Number(r.number.slice(prefix.length))).filter((n) => Number.isInteger(n)));
+    return { number: `${prefix}${max + 1}` };
   }
 
   async listInvoices(q: InvoiceQuery) {
@@ -833,9 +859,15 @@ export class AccountingService {
       clientId: dto.clientId, clientName: dto.clientName?.trim(),
       clientDetails: cd ? ({
         contactPerson: cd.contactPerson?.trim() ?? '', phone: cd.phone?.trim() ?? '', email: cd.email?.trim() ?? '',
-        gstin: (cd.gstin ?? '').trim().toUpperCase(), address: cd.address?.trim() ?? '',
+        gstin: (cd.gstin ?? '').trim().toUpperCase(), address: cd.address?.trim() ?? '', stateCode: cd.stateCode ?? '',
       } as Prisma.InputJsonValue) : undefined,
-      items: dto.items ? (dto.items.map((i) => ({ description: i.description.trim(), qty: i.qty, rate: i.rate })) as unknown as Prisma.InputJsonValue) : undefined,
+      items: dto.items ? (dto.items.map((i) => ({
+        description: i.description.trim(), hsn: (i.hsn ?? '').trim().toUpperCase(), qty: i.qty, unit: (i.unit ?? '').trim(), rate: i.rate,
+      })) as unknown as Prisma.InputJsonValue) : undefined,
+      extra: dto.extra ? (Object.fromEntries(Object.entries(dto.extra).map(([k, v]) => [k, String(v ?? '').trim()]).filter(([, v]) => v)) as Prisma.InputJsonValue) : undefined,
+      shipTo: dto.shipTo === undefined ? undefined : dto.shipTo === null ? Prisma.DbNull : ({
+        name: dto.shipTo.name.trim(), address: dto.shipTo.address?.trim() ?? '', gstin: (dto.shipTo.gstin ?? '').trim().toUpperCase(), stateCode: dto.shipTo.stateCode ?? '',
+      } as Prisma.InputJsonValue),
       discount: dto.discount, gstRate: dto.gstRate, notes: dto.notes === undefined ? undefined : dto.notes?.trim() || null,
       terms: dto.terms ? dto.terms.map((t) => t.trim()).filter(Boolean) : undefined,
       preparedBy: dto.preparedBy === undefined ? undefined : dto.preparedBy?.trim() || null, projectId: dto.projectId, cancelled: dto.cancelled,
@@ -874,13 +906,14 @@ export class AccountingService {
     const due = new Date(Date.UTC(y, m - 1, d + s.invoiceDueDays)).toISOString().slice(0, 10);
     const items = (q.items as { title: string; points: string[]; qty: string; amount: number }[]).map((it) => ({
       description: [it.title, ...(it.points ?? []).map((p) => `• ${p}`)].join('\n').slice(0, 1000),
-      qty: 1, rate: Number(it.amount) || 0,
+      hsn: s.defaultHsn, qty: 1, unit: '', rate: Number(it.amount) || 0,
     }));
     const project = q.clientId ? await this.prisma.acctProject.findFirst({ where: { clientId: q.clientId, status: 'ACTIVE' }, orderBy: { createdAt: 'desc' }, select: { id: true } }) : null;
     return this.createInvoice(u, {
       date, dueDate: due, clientId: q.clientId, clientName: q.clientName,
       clientDetails: { contactPerson: q.client?.contactName ?? '', phone: q.client?.phone ?? '', email: q.client?.email ?? '', gstin: '', address: q.address ?? '' },
-      items, discount: 0, gstRate: num(q.gstRate), notes: `As per quotation ${q.number}`, terms: s.invoiceTerms, preparedBy: u.fullName,
+      items, discount: 0, gstRate: num(q.gstRate), notes: null, terms: s.invoiceTerms, preparedBy: u.fullName,
+      extra: { otherReferences: `Quotation ${q.number}` },
       projectId: project?.id ?? null,
     }, q.id);
   }
