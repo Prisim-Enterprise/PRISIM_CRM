@@ -64,6 +64,8 @@ export class ExpenseDto {
   /** Typed vendor/payee name: matched to an existing vendor or added. Empty clears it. */
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(120) vendorName?: string | null;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() projectId?: string | null;
+  /** Ignored when a project is given: the expense then belongs to the project's client. */
+  @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() clientId?: string | null;
   @IsOptional() @IsEnum(AcctPaymentMethod) paymentMethod?: AcctPaymentMethod;
   @IsOptional() @IsEnum(AcctExpenseStatus) status?: AcctExpenseStatus;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(2000) description?: string | null;
@@ -77,6 +79,8 @@ export class UpdateExpenseDto {
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() categoryId?: string | null;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(120) vendorName?: string | null;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() projectId?: string | null;
+  /** Ignored when a project is given: the expense then belongs to the project's client. */
+  @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() clientId?: string | null;
   @IsOptional() @IsEnum(AcctPaymentMethod) paymentMethod?: AcctPaymentMethod;
   @IsOptional() @IsEnum(AcctExpenseStatus) status?: AcctExpenseStatus;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(2000) description?: string | null;
@@ -99,6 +103,7 @@ export class ExpenseQuery {
   @IsOptional() @IsString() categoryId?: string; // a uuid, or "none"
   @IsOptional() @IsString() vendorId?: string; // a uuid, or "none"
   @IsOptional() @IsString() projectId?: string; // a uuid, or "none"
+  @IsOptional() @IsString() clientId?: string; // a uuid, or "none"
   @IsOptional() @IsUUID() submittedById?: string;
   @IsOptional() @IsEnum(AcctPaymentMethod) paymentMethod?: AcctPaymentMethod;
   @IsOptional() @IsString() @MaxLength(100) search?: string;
@@ -227,6 +232,11 @@ export class NextNumberQuery {
   @IsOptional() @IsDateString() date?: string;
 }
 export class LedgerQuery {
+  @IsDateString() from: string;
+  @IsDateString() to: string;
+}
+
+export class AnalysisQuery {
   @IsDateString() from: string;
   @IsDateString() to: string;
 }

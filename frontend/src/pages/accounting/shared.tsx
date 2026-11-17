@@ -19,6 +19,8 @@ export interface Expense {
   description: string | null; tags: string[]; hasReceipt: boolean; receiptName: string | null; receiptType: string | null;
   categoryId: string | null; categoryLabel: string | null; topCategoryId: string | null;
   vendor: { id: string; name: string } | null; project: { id: string; title: string; client: { id: string; name: string } } | null;
+  /** The client this cost was for (from the project, or picked on its own). */
+  clientId: string | null; client: { id: string; name: string } | null;
   submittedBy: Person; reviewedBy: Person | null; reviewedAt: string | null; reviewComment: string | null; createdAt: string;
 }
 export interface ExpensePage { items: Expense[]; total: number; page: number; pages: number; sum: number; pending: { count: number; amount: number } }
@@ -26,7 +28,8 @@ export interface ExpensePage { items: Expense[]; total: number; page: number; pa
 export interface Lookups {
   categories: { id: string; name: string; parentId: string | null; sortOrder: number }[];
   vendors: { id: string; name: string }[];
-  projects: { id: string; title: string; status: ProjectStatus; clientName: string }[];
+  projects: { id: string; title: string; status: ProjectStatus; clientId: string; clientName: string }[];
+  clients: { id: string; name: string; status: string }[];
   tags: string[];
   canManage: boolean;
 }
@@ -186,6 +189,29 @@ export function monthlyBudget(id: string, cats: Ledger['categories']): number {
 
 export const CHART_COLORS = ['#4f46e5', '#f97316', '#10b981', '#eab308', '#ec4899', '#0ea5e9', '#8b5cf6', '#14b8a6'];
 export const OTHER_COLOR = '#94a3b8';
+
+// ───────────────────────── Client analysis ─────────────────────────
+
+export interface ClientRow {
+  clientId: string | null; name: string; status: string | null; projects: number; activeProjects: number;
+  received: number; invoiced: number; spent: number; profit: number; margin: number | null;
+  outstanding: number; overdue: number; invoices: number; lastPayment: string | null;
+}
+export interface MonthRow { month: string; received: number; spent: number; profit: number }
+export interface ClientAnalysis {
+  from: string; to: string; clients: ClientRow[]; months: MonthRow[];
+  totals: {
+    received: number; invoiced: number; outstanding: number; overdue: number; clientSpent: number; overhead: number; spent: number;
+    grossProfit: number; netProfit: number; grossMargin: number | null; payingClients: number; clientsWithWork: number;
+    topClient: { name: string; share: number } | null;
+  };
+}
+export interface ClientDetailAnalysis {
+  from: string; to: string; client: { id: string; name: string; status: string; contactName: string | null; phone: string | null; email: string | null };
+  summary: ClientRow | null; months: MonthRow[]; categories: { name: string; amount: number }[];
+  projects: Project[]; invoices: Invoice[]; expenses: Expense[];
+}
+export const pct = (n: number | null) => (n === null ? "—" : `${(n * 100).toFixed(0)}%`);
 
 // ───────────────────────── Data & access ─────────────────────────
 

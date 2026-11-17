@@ -8,8 +8,8 @@ import { AuthUser } from '../common/current-user';
 import { CategoryDto, DeleteManyDto, ExpenseDto, ExpenseQuery, MonthQuery, ReviewDto, UpdateCategoryDto, UpdateExpenseDto } from './dto';
 import { AccountingSettingsService } from './settings.service';
 import {
-  assertCanSubmit, assertProjectExists, csv, day, expenseInclude, expenseOrder, expenseWhere, iso, isManager, MAX_RECEIPT_BYTES,
-  normalizeTags, num, RECEIPT_TYPES, reviewFields, shapeExpense, today,
+  assertCanSubmit, assertClientExists, csv, day, expenseInclude, expenseOrder, expenseWhere, iso, isManager, MAX_RECEIPT_BYTES,
+  expenseClientId, normalizeTags, num, RECEIPT_TYPES, reviewFields, shapeExpense, today,
 } from './shared';
 
 /** Expenses, their receipts, and the categories / budgets they are filed under. */
@@ -20,19 +20,20 @@ export class ExpensesService {
   // ── Lookups for forms ──
   async lookups(u: AuthUser) {
     assertCanSubmit(u);
-    const [categories, vendors, projects] = await Promise.all([
+    const [categories, vendors, projects, clients] = await Promise.all([
       this.prisma.acctCategory.findMany({ where: { archived: false }, select: { id: true, name: true, parentId: true, sortOrder: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
       this.prisma.acctVendor.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } }),
       this.prisma.acctProject.findMany({
-        where: { status: { not: 'CANCELLED' } }, select: { id: true, title: true, status: true, client: { select: { name: true } } }, orderBy: { createdAt: 'desc' },
+        where: { status: { not: 'CANCELLED' } }, select: { id: true, title: true, status: true, clientId: true, client: { select: { name: true } } }, orderBy: { createdAt: 'desc' },
       }),
+      this.prisma.client.findMany({ select: { id: true, name: true, status: true }, orderBy: [{ status: 'asc' }, { name: 'asc' }] }),
     ]);
     const tags = isManager(u)
       ? await this.prisma.$queryRaw<{ tag: string }[]>`SELECT DISTINCT unnest("tags") AS tag FROM "acct_expenses" ORDER BY 1 LIMIT 300`
       : [];
     return {
-      categories, vendors, tags: tags.map((t) => t.tag),
-      projects: projects.map((p) => ({ id: p.id, title: p.title, status: p.status, clientName: p.client.name })),
+      categories, vendors, clients, tags: tags.map((t) => t.tag),
+      projects: projects.map((p) => ({ id: p.id, title: p.title, status: p.status, clientId: p.clientId, clientName: p.client.name })),
       canManage: isManager(u),
     };
   }
@@ -140,7 +141,7 @@ export class ExpensesService {
       ['Date', 'Amount (INR)', 'Status', 'Category', 'Vendor / payee', 'Client', 'Project', 'Payment method', 'Description', 'Tags', 'Date paid', 'Submitted by', 'Reviewed by', 'Review comment', 'Receipt'],
       ...rows.map((r) => {
         const e = shapeExpense(r);
-        return [e.dateIncurred, e.amount.toFixed(2), e.status, e.categoryLabel ?? '', e.vendor?.name ?? '', e.project?.client.name ?? '', e.project?.title ?? '',
+        return [e.dateIncurred, e.amount.toFixed(2), e.status, e.categoryLabel ?? '', e.vendor?.name ?? '', e.client?.name ?? e.project?.client.name ?? '', e.project?.title ?? '',
           e.paymentMethod, e.description ?? '', e.tags.join('; '), e.datePaid ?? '', e.submittedBy.fullName, e.reviewedBy?.fullName ?? '', e.reviewComment ?? '', e.hasReceipt ? 'yes' : ''];
       }),
     ]);
@@ -157,9 +158,17 @@ export class ExpensesService {
     catch { return (await this.prisma.acctVendor.findFirstOrThrow({ where: { name: { equals: n, mode: 'insensitive' } } })).id; }
   }
 
-  private async checkRefs(dto: { categoryId?: string | null; projectId?: string | null }) {
+  private async checkRefs(dto: { categoryId?: string | null; clientId?: string | null }) {
     if (dto.categoryId && !(await this.prisma.acctCategory.count({ where: { id: dto.categoryId } }))) throw new BadRequestException('That category does not exist');
-    await assertProjectExists(this.prisma, dto.projectId);
+    await assertClientExists(this.prisma, dto.clientId);
+  }
+
+  /** The client of a project (and a 400 if the project doesn't exist). */
+  private async projectClient(projectId: string | null | undefined): Promise<string | null> {
+    if (!projectId) return null;
+    const p = await this.prisma.acctProject.findUnique({ where: { id: projectId }, select: { clientId: true } });
+    if (!p) throw new BadRequestException('That project does not exist');
+    return p.clientId;
   }
 
   async createExpense(u: AuthUser, dto: ExpenseDto) {
@@ -171,7 +180,8 @@ export class ExpensesService {
     const e = await this.prisma.acctExpense.create({
       data: {
         amount: dto.amount, dateIncurred: day(dto.dateIncurred), datePaid, categoryId: dto.categoryId ?? null, vendorId: (await this.vendorId(dto.vendorName)) ?? null,
-        projectId: dto.projectId ?? null, paymentMethod: dto.paymentMethod ?? 'BANK_TRANSFER', description: dto.description?.trim() || null,
+        projectId: dto.projectId ?? null, clientId: expenseClientId(await this.projectClient(dto.projectId), dto.clientId ?? null),
+        paymentMethod: dto.paymentMethod ?? 'BANK_TRANSFER', description: dto.description?.trim() || null,
         tags: normalizeTags(dto.tags ?? []), submittedById: u.id,
         status: 'PENDING', ...reviewFields(u.id, status, 'PENDING', datePaid), reviewComment: manager ? dto.reviewComment?.trim() || null : null,
       },
@@ -204,6 +214,7 @@ export class ExpensesService {
         amount: dto.amount, dateIncurred: dto.dateIncurred ? day(dto.dateIncurred) : undefined,
         datePaid: dto.datePaid === undefined ? undefined : datePaid, categoryId: dto.categoryId, vendorId: await this.vendorId(dto.vendorName),
         projectId: dto.projectId, paymentMethod: dto.paymentMethod,
+        clientId: expenseClientId(await this.projectClient(dto.projectId === undefined ? before.projectId : dto.projectId), dto.clientId, before.clientId),
         description: dto.description === undefined ? undefined : dto.description?.trim() || null,
         tags: dto.tags ? normalizeTags(dto.tags) : undefined,
         ...(manager ? reviewFields(u.id, dto.status, before.status, datePaid) : {}),

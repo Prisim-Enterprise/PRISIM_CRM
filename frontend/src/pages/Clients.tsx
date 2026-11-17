@@ -3,10 +3,12 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  ArrowLeft, Briefcase, Building2, CalendarClock, FileText, Mail, MessageSquare, Paperclip, Pencil, Phone, Plus, Send, Trash2, User as UserIcon,
+  ArrowLeft, BarChart3, Briefcase, Building2, CalendarClock, FileText, Mail, MessageSquare, Paperclip, Pencil, Phone, Plus, Receipt, Send, Trash2, User as UserIcon,
 } from 'lucide-react';
 import { api, errMsg } from '../lib/api';
 import { CreateTaskModal } from './Tasks';
+import { ExpenseModal } from './accounting/Expenses';
+import { ClientDetailAnalysis, pct, presetRange, rupees, Settings } from './accounting/shared';
 import { TASK_STATUS } from '../lib/format';
 import { useAuth } from '../lib/auth';
 import { useDirectory } from '../lib/hooks';
@@ -222,6 +224,7 @@ export function ClientDetail() {
             {c.notes && <div className="border-t border-slate-100 pt-2.5"><p className="mb-1 text-xs font-medium uppercase text-slate-500">Notes</p><p className="whitespace-pre-wrap text-slate-700">{c.notes}</p></div>}
           </dl>
         </Card>
+        <ClientAccounts clientId={id} />
         <WorkedOnBy clientId={id} works={c.works} />
         </div>
         <div className="space-y-5 lg:col-span-2">
@@ -540,6 +543,46 @@ function WorkedOnBy({ clientId, works }: { clientId: string; works: Work[] }) {
           ))}
         </ul>
       )}
+    </Card>
+  );
+}
+
+/** Money for this client, for people with accounting access: this year at a glance, and add an expense. */
+function ClientAccounts({ clientId }: { clientId: string }) {
+  const { can } = useAuth();
+  const manager = can('accounting.manage');
+  const submitter = manager || can('accounting.expenses.submit');
+  const qc = useQueryClient();
+  const [adding, setAdding] = useState(false);
+  // Settings are manager-only, so only managers ask for them.
+  const fy = useQuery({ queryKey: ['acct-settings'], queryFn: () => api.get<Settings>('/accounting/settings'), staleTime: 60_000, enabled: manager });
+  const range = manager && fy.data ? presetRange('fytd', fy.data.fyStartMonth).current : null;
+  const q = useQuery({
+    queryKey: ['acct-analysis', 'client', clientId, range?.from, range?.to],
+    queryFn: () => api.get<ClientDetailAnalysis>(`/accounting/analysis/clients/${clientId}`, { from: range!.from, to: range!.to }),
+    enabled: !!range,
+  });
+  if (!submitter) return null;
+  const s = q.data?.summary;
+  const refresh = () => ['acct-analysis', 'acct-expenses', 'acct-projects', 'acct-ledger'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  return (
+    <Card title="Accounts" actions={<Button size="sm" variant="secondary" onClick={() => setAdding(true)}><Receipt className="h-3.5 w-3.5" />Add expense</Button>}>
+      {manager ? (
+        !q.data && !q.error ? <Spinner /> : q.error ? <div className="p-4"><ErrorBox error={q.error} /></div> : (
+          <div className="space-y-2.5 p-4 text-sm">
+            <p className="text-xs font-medium uppercase text-slate-500">This financial year</p>
+            {([['Received', rupees(s?.received ?? 0)], ['Spent', rupees(s?.spent ?? 0)], ['Profit', `${rupees(s?.profit ?? 0)} · ${pct(s?.margin ?? null)}`],
+              ['Outstanding now', `${rupees(s?.outstanding ?? 0)}${s?.overdue ? ` (${rupees(s.overdue)} overdue)` : ''}`]] as const).map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-3"><span className="text-slate-500">{k}</span><span className="text-right font-medium tabular-nums text-slate-900">{v}</span></div>
+            ))}
+            <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-100 pt-2.5">
+              <Link to={`/accounting/client-analysis/${clientId}`} className="inline-flex items-center gap-1 text-indigo-700 hover:underline"><BarChart3 className="h-3.5 w-3.5" />Full analysis</Link>
+              <Link to={`/accounting/expenses?clientId=${clientId}`} className="text-indigo-700 hover:underline">Expenses</Link>
+            </div>
+          </div>
+        )
+      ) : <p className="p-4 text-sm text-slate-500">Spent money on work for this client? Add it here and accounts will review it.</p>}
+      {adding && <ExpenseModal expense={null} defaults={{ clientId }} onClose={() => setAdding(false)} onSaved={refresh} />}
     </Card>
   );
 }

@@ -14,7 +14,7 @@ import {
 const STATUS_FILTERS: Record<string, string> = {
   '': 'Any status', PENDING: 'Pending', 'APPROVED,PAID': 'Approved & paid', APPROVED: 'Approved (not paid)', PAID: 'Paid', REJECTED: 'Rejected',
 };
-const FILTER_KEYS = ['search', 'from', 'to', 'status', 'categoryId', 'vendorId', 'projectId', 'submittedById', 'paymentMethod', 'receipt', 'tag', 'sort'] as const;
+const FILTER_KEYS = ['search', 'from', 'to', 'status', 'categoryId', 'vendorId', 'clientId', 'projectId', 'submittedById', 'paymentMethod', 'receipt', 'tag', 'sort'] as const;
 
 export default function Expenses() {
   return <AccountingGate submitOk><ExpensesPage /></AccountingGate>;
@@ -88,6 +88,10 @@ function ExpensesPage() {
           <Select value={filters.vendorId} onChange={(e) => setFilter('vendorId', e.target.value)} className="w-44" aria-label="Vendor">
             <option value="">Any vendor</option><option value="none">No vendor</option>
             {lookups.data?.vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </Select>
+          <Select value={filters.clientId} onChange={(e) => setFilter('clientId', e.target.value)} className="w-44" aria-label="Client">
+            <option value="">Any client</option><option value="none">No client (overhead)</option>
+            {lookups.data?.clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
           <Select value={filters.projectId} onChange={(e) => setFilter('projectId', e.target.value)} className="w-52" aria-label="Client project">
             <option value="">Any project</option><option value="none">Not linked to a project</option>
@@ -163,7 +167,7 @@ export function ExpenseTable({ items, manager, selected, allChecked, onToggle, o
       <thead>
         <tr>
           {pick && <Th className="w-8"><input type="checkbox" checked={allChecked} onChange={onToggleAll} aria-label="Select all" /></Th>}
-          <Th>Date</Th><Th>Details</Th><Th>Category</Th><Th>Client project</Th><Th>Method</Th><Th className="text-right">Amount</Th><Th>Status</Th>
+          <Th>Date</Th><Th>Details</Th><Th>Category</Th><Th>Client · project</Th><Th>Method</Th><Th className="text-right">Amount</Th><Th>Status</Th>
           {showSubmitter && <Th>Submitted by</Th>}
         </tr>
       </thead>
@@ -183,7 +187,7 @@ export function ExpenseTable({ items, manager, selected, allChecked, onToggle, o
               )}
             </Td>
             <Td className="text-slate-600">{e.categoryLabel ?? <span className="text-slate-400">Uncategorized</span>}</Td>
-            <Td className="max-w-[12rem] truncate text-slate-600">{e.project ? `${e.project.client.name} · ${e.project.title}` : '—'}</Td>
+            <Td className="max-w-[12rem] truncate text-slate-600">{e.project ? `${e.project.client.name} · ${e.project.title}` : e.client?.name ?? '—'}</Td>
             <Td className="whitespace-nowrap text-slate-600">{METHODS[e.paymentMethod]}</Td>
             <Td className="text-right font-medium tabular-nums">{rupees(e.amount)}</Td>
             <Td><Badge className={EXPENSE_STATUS[e.status].color}>{EXPENSE_STATUS[e.status].label}</Badge></Td>
@@ -198,16 +202,20 @@ export function ExpenseTable({ items, manager, selected, allChecked, onToggle, o
 // ───────────────────────── Add / edit ─────────────────────────
 
 interface Form {
-  amount: string; dateIncurred: string; datePaid: string; categoryId: string; vendorName: string; projectId: string;
+  amount: string; dateIncurred: string; datePaid: string; categoryId: string; vendorName: string; clientId: string; projectId: string;
   paymentMethod: PaymentMethod; status: ExpenseStatus; description: string; tags: string; reviewComment: string;
 }
 
-export function ExpenseModal({ expense, onClose, onSaved }: { expense: Expense | null; onClose: () => void; onSaved: () => void }) {
+/** defaults: pre-fill the client and/or project when adding from a client or project page. */
+export function ExpenseModal({ expense, onClose, onSaved, defaults }: {
+  expense: Expense | null; onClose: () => void; onSaved: () => void; defaults?: { clientId?: string; projectId?: string };
+}) {
   const lookups = useLookups();
   const manager = !!lookups.data?.canManage;
   const [f, setF] = useState<Form>(() => ({
     amount: expense ? String(expense.amount) : '', dateIncurred: expense?.dateIncurred ?? todayIso(), datePaid: expense?.datePaid ?? '',
-    categoryId: expense?.categoryId ?? '', vendorName: expense?.vendor?.name ?? '', projectId: expense?.project?.id ?? '',
+    categoryId: expense?.categoryId ?? '', vendorName: expense?.vendor?.name ?? '',
+    clientId: expense?.clientId ?? expense?.project?.client.id ?? defaults?.clientId ?? '', projectId: expense?.project?.id ?? defaults?.projectId ?? '',
     paymentMethod: expense?.paymentMethod ?? 'UPI', status: expense?.status ?? 'APPROVED', description: expense?.description ?? '',
     tags: expense?.tags.join(', ') ?? '', reviewComment: expense?.reviewComment ?? '',
   }));
@@ -230,7 +238,7 @@ export function ExpenseModal({ expense, onClose, onSaved }: { expense: Expense |
     try {
       const body = {
         amount: Math.round(amount * 100) / 100, dateIncurred: f.dateIncurred, categoryId: f.categoryId || null, vendorName: f.vendorName.trim() || null,
-        projectId: f.projectId || null, paymentMethod: f.paymentMethod, description: f.description.trim() || null,
+        projectId: f.projectId || null, clientId: f.clientId || null, paymentMethod: f.paymentMethod, description: f.description.trim() || null,
         tags: f.tags.split(',').map((t) => t.trim().replace(/^#/, '')).filter(Boolean),
         ...(manager ? { status: f.status, datePaid: f.datePaid || null, reviewComment: f.reviewComment.trim() || null } : {}),
       };
@@ -280,11 +288,27 @@ export function ExpenseModal({ expense, onClose, onSaved }: { expense: Expense |
             {cats.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
           </Select>
         </Field>
-        <Field label="Client project (optional)">
-          <Select value={f.projectId} onChange={(e) => set({ projectId: e.target.value })}>
+        <Field label="Client (optional)" hint={f.clientId ? undefined : 'Leave empty for company costs such as rent.'}>
+          <Select value={f.clientId} onChange={(e) => {
+            const clientId = e.target.value;
+            // A project from another client no longer fits.
+            const keep = lookups.data?.projects.find((p) => p.id === f.projectId)?.clientId === clientId;
+            set({ clientId, projectId: keep ? f.projectId : '' });
+          }}>
+            <option value="">No client (company cost)</option>
+            {expense?.client && !lookups.data?.clients.some((c) => c.id === expense.client!.id) && <option value={expense.client.id}>{expense.client.name}</option>}
+            {lookups.data?.clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </Select>
+        </Field>
+        <Field label="Project (optional)">
+          <Select value={f.projectId} onChange={(e) => {
+            const projectId = e.target.value;
+            const owner = lookups.data?.projects.find((p) => p.id === projectId)?.clientId;
+            set({ projectId, clientId: owner ?? f.clientId });
+          }}>
             <option value="">Not linked to a project</option>
             {projectGone && <option value={expense!.project!.id}>{expense!.project!.client.name} · {expense!.project!.title}</option>}
-            {lookups.data?.projects.map((p) => <option key={p.id} value={p.id}>{p.clientName} · {p.title}</option>)}
+            {lookups.data?.projects.filter((p) => !f.clientId || p.clientId === f.clientId).map((p) => <option key={p.id} value={p.id}>{f.clientId ? p.title : `${p.clientName} · ${p.title}`}</option>)}
           </Select>
         </Field>
         <Field label="Payment method">

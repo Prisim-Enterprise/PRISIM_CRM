@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { ArrowLeft, Briefcase, FilePlus2, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, BarChart3, Briefcase, FilePlus2, Pencil, Plus, Receipt, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errMsg } from '../../lib/api';
 import { Badge, Button, Card, Empty, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, StatCard, Table, Td, Textarea, Th } from '../../components/ui';
@@ -50,6 +50,8 @@ function ProjectsPage() {
   const [status, setStatus] = useState<ProjectStatus | ''>('ACTIVE');
   const [search, setSearch] = useState('');
   const [adding, setAdding] = useState(false);
+  const [addingExpense, setAddingExpense] = useState(false);
+  const qc = useQueryClient();
   const nav = useNavigate();
   const q = useQuery({ queryKey: ['acct-projects', status, search], queryFn: () => api.get<Project[]>('/accounting/projects', { status, search }) });
   const list = q.data ?? [];
@@ -57,7 +59,11 @@ function ProjectsPage() {
   return (
     <div className="space-y-4">
       <PageHeader title="Clients & Projects" subtitle="Every job from the first meeting to the final payment, for clients in the CRM."
-        actions={<Button onClick={() => setAdding(true)}><Plus className="h-4 w-4" />New project</Button>} />
+        actions={<>
+          <Link to="/accounting/client-analysis"><Button variant="secondary"><BarChart3 className="h-4 w-4" />Client analysis</Button></Link>
+          <Button variant="secondary" onClick={() => setAddingExpense(true)}><Receipt className="h-4 w-4" />Add expense</Button>
+          <Button onClick={() => setAdding(true)}><Plus className="h-4 w-4" />New project</Button>
+        </>} />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Quoted / invoiced" value={rupees(t.quoted)} />
         <StatCard label="Received" value={rupees(t.received)} tone="good" />
@@ -101,6 +107,7 @@ function ProjectsPage() {
         )}
       </Card>
       {adding && <ProjectModal onClose={() => setAdding(false)} onSaved={(p) => nav(`/accounting/projects/${p.id}`)} />}
+      {addingExpense && <ExpenseModal expense={null} onClose={() => setAddingExpense(false)} onSaved={() => { qc.invalidateQueries({ queryKey: ['acct-projects'] }); qc.invalidateQueries({ queryKey: ['acct-expenses'] }); qc.invalidateQueries({ queryKey: ['acct-ledger'] }); qc.invalidateQueries({ queryKey: ['acct-analysis'] }); }} />}
     </div>
   );
 }
@@ -196,7 +203,8 @@ function ProjectDetailPage() {
   const [editing, setEditing] = useState(false);
   const [paying, setPaying] = useState(false);
   const [expense, setExpense] = useState<Expense | null>(null);
-  const refresh = () => { qc.invalidateQueries({ queryKey: ['acct-project', id] }); qc.invalidateQueries({ queryKey: ['acct-projects'] }); qc.invalidateQueries({ queryKey: ['acct-ledger'] }); qc.invalidateQueries({ queryKey: ['acct-expenses'] }); };
+  const [addingExpense, setAddingExpense] = useState(false);
+  const refresh = () => { qc.invalidateQueries({ queryKey: ['acct-analysis'] }); qc.invalidateQueries({ queryKey: ['acct-project', id] }); qc.invalidateQueries({ queryKey: ['acct-projects'] }); qc.invalidateQueries({ queryKey: ['acct-ledger'] }); qc.invalidateQueries({ queryKey: ['acct-expenses'] }); };
   if (q.isLoading) return <Spinner />;
   if (q.error || !q.data) return <ErrorBox error={q.error ?? new Error('Project not found')} />;
   const p = q.data;
@@ -216,11 +224,12 @@ function ProjectDetailPage() {
   return (
     <div className="space-y-4">
       <Link to="/accounting/projects" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"><ArrowLeft className="h-4 w-4" />Clients & Projects</Link>
-      <PageHeader title={p.title} subtitle={<><Link to={`/clients/${p.client.id}`} className="font-medium text-indigo-700 hover:underline">{p.client.name}</Link> · <Badge className={STAGES[s].color}>{STAGES[s].label}</Badge></>}
+      <PageHeader title={p.title} subtitle={<><Link to={`/clients/${p.client.id}`} className="font-medium text-indigo-700 hover:underline">{p.client.name}</Link> · <Link to={`/accounting/client-analysis/${p.client.id}`} className="text-indigo-600 hover:underline">client analysis</Link> · <Badge className={STAGES[s].color}>{STAGES[s].label}</Badge></>}
         actions={<>
           <Button variant="ghost" className="text-rose-600 hover:bg-rose-50" onClick={remove}><Trash2 className="h-4 w-4" />Delete</Button>
           <Button variant="secondary" onClick={() => setEditing(true)}><Pencil className="h-4 w-4" />Edit</Button>
           <Button variant="secondary" onClick={newInvoice}><FilePlus2 className="h-4 w-4" />New invoice</Button>
+          <Button variant="secondary" onClick={() => setAddingExpense(true)}><Receipt className="h-4 w-4" />Add expense</Button>
           <Button onClick={() => setPaying(true)}><Plus className="h-4 w-4" />Record payment</Button>
         </>} />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -282,8 +291,11 @@ function ProjectDetailPage() {
         )}
       </Card>
 
-      <Card title={`Expenses (${p.expenses.length})`} actions={<Link to={`/accounting/expenses?projectId=${p.id}`} className="text-sm text-indigo-600 hover:underline">Open in Expenses</Link>}>
-        {!p.expenses.length ? <p className="p-4 text-sm text-slate-500">No expenses linked. Pick this project when adding an expense.</p>
+      <Card title={`Expenses (${p.expenses.length})`} actions={<div className="flex items-center gap-3">
+          <Link to={`/accounting/expenses?projectId=${p.id}`} className="text-sm text-indigo-600 hover:underline">Open in Expenses</Link>
+          <Button size="sm" variant="secondary" onClick={() => setAddingExpense(true)}><Plus className="h-3.5 w-3.5" />Add expense</Button>
+        </div>}>
+        {!p.expenses.length ? <p className="p-4 text-sm text-slate-500">No expenses for this project yet.</p>
           : <ExpenseTable items={p.expenses} manager onOpen={setExpense} />}
       </Card>
 
@@ -291,6 +303,7 @@ function ProjectDetailPage() {
       {paying && <PaymentModal title="Record payment received" onClose={() => setPaying(false)}
         onSave={async (b) => { await api.post(`/accounting/projects/${p.id}/payments`, b); refresh(); toast.success('Payment recorded'); }} />}
       {expense && <ExpenseModal expense={expense} onClose={() => setExpense(null)} onSaved={refresh} />}
+      {addingExpense && <ExpenseModal expense={null} defaults={{ projectId: p.id, clientId: p.client.id }} onClose={() => setAddingExpense(false)} onSaved={refresh} />}
     </div>
   );
 }

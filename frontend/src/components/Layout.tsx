@@ -107,6 +107,7 @@ export const ACCOUNTING_SECTIONS: { path: string; label: string; to?: string; pe
   { path: 'dashboard', label: 'Dashboard' },
   { path: 'expenses', label: 'Expenses', perm: 'accounting.expenses.submit' },
   { path: 'projects', label: 'Clients & Projects' },
+  { path: 'client-analysis', label: 'Client analysis' },
   { path: 'quotations', label: 'Quotations', to: '/quotations', perm: 'quotations.manage' }, // The CRM's own, shared quotations
   { path: 'invoices', label: 'Invoices' },
   { path: 'categories', label: 'Categories & Budgets' },

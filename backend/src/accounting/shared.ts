@@ -146,6 +146,7 @@ export const expenseInclude = {
   category: { select: { id: true, name: true, parentId: true, parent: { select: { id: true, name: true } } } },
   vendor: { select: { id: true, name: true } },
   project: { select: { id: true, title: true, client: { select: { id: true, name: true } } } },
+  client: { select: { id: true, name: true } },
   submittedBy: person,
   reviewedBy: person,
 } satisfies Prisma.AcctExpenseInclude;
@@ -165,7 +166,7 @@ export const EXPENSE_SORTS = ['date_desc', 'date_asc', 'amount_desc', 'amount_as
 
 export interface ExpenseFilter {
   from?: string; to?: string; status?: AcctExpenseStatus[];
-  categoryId?: string; vendorId?: string; projectId?: string; submittedById?: string;
+  categoryId?: string; vendorId?: string; projectId?: string; clientId?: string; submittedById?: string;
   paymentMethod?: AcctPaymentMethod; search?: string; tag?: string; receipt?: 'yes' | 'no';
 }
 
@@ -173,7 +174,7 @@ const UUID = /^[0-9a-f-]{36}$/i;
 
 /** Expense filter. People without accounting.manage only ever see their own expenses, whatever they ask for. */
 export function expenseWhere(u: Pick<AuthUser, 'id' | 'permissions'>, q: ExpenseFilter): Prisma.AcctExpenseWhereInput {
-  for (const id of [q.categoryId, q.vendorId, q.projectId]) if (id && id !== 'none' && !UUID.test(id)) throw new BadRequestException('Invalid filter');
+  for (const id of [q.categoryId, q.vendorId, q.projectId, q.clientId]) if (id && id !== 'none' && !UUID.test(id)) throw new BadRequestException('Invalid filter');
   const and: Prisma.AcctExpenseWhereInput[] = [];
   if (!isManager(u)) and.push({ submittedById: u.id });
   if (q.from || q.to) and.push({ dateIncurred: { ...(q.from ? { gte: day(q.from) } : {}), ...(q.to ? { lte: day(q.to) } : {}) } });
@@ -184,6 +185,8 @@ export function expenseWhere(u: Pick<AuthUser, 'id' | 'permissions'>, q: Expense
   else if (q.vendorId) and.push({ vendorId: q.vendorId });
   if (q.projectId === 'none') and.push({ projectId: null });
   else if (q.projectId) and.push({ projectId: q.projectId });
+  if (q.clientId === 'none') and.push({ clientId: null });
+  else if (q.clientId) and.push({ clientId: q.clientId });
   if (q.submittedById) and.push({ submittedById: q.submittedById });
   if (q.paymentMethod) and.push({ paymentMethod: q.paymentMethod });
   if (q.tag) and.push({ tags: { has: q.tag.trim().toLowerCase() } });
@@ -226,4 +229,13 @@ export type ProjectMoney = { received: number; spent: number; invoiced: number; 
 export function projectFigures(quoted: number | null, money: ProjectMoney) {
   const billed = Math.max(quoted ?? 0, money.invoiced);
   return { balance: r2(Math.max(0, billed - money.received)), profit: r2(money.received - money.spent) };
+}
+
+/**
+ * Which client an expense belongs to. A project's client always wins (so the two can't disagree);
+ * without a project it is the client picked, or, when nothing new was sent, what it already was.
+ */
+export function expenseClientId(projectClientId: string | null | undefined, picked: string | null | undefined, current: string | null = null) {
+  if (projectClientId) return projectClientId;
+  return picked === undefined ? current : picked;
 }

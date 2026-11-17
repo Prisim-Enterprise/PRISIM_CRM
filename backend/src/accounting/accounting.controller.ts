@@ -4,10 +4,11 @@ import type { Response } from 'express';
 import { FileUpload } from '../common/file-upload';
 import { AuthUser, CurrentUser, RequireAny } from '../common/current-user';
 import {
-  CategoryDto, DeleteManyDto, ExpenseDto, ExpenseQuery, InvoiceDto, InvoiceQuery, LedgerQuery, MonthQuery, NextNumberQuery, PaymentDto, ProjectDto,
+  AnalysisQuery, CategoryDto, DeleteManyDto, ExpenseDto, ExpenseQuery, InvoiceDto, InvoiceQuery, LedgerQuery, MonthQuery, NextNumberQuery, PaymentDto, ProjectDto,
   ProjectQuery, ReceiptParams, ReviewDto, SettingsDto, UpdateCategoryDto, UpdateExpenseDto, UpdateInvoiceDto, UpdateProjectDto,
 } from './dto';
 import { AccountingSettingsService } from './settings.service';
+import { AnalysisService } from './analysis.service';
 import { ExpensesService } from './expenses.service';
 import { InvoicesService } from './invoices.service';
 import { LedgerService } from './ledger.service';
@@ -22,13 +23,15 @@ import { MANAGE, MAX_INVOICE_FILE_BYTES, MAX_RECEIPT_BYTES } from './shared';
 export class AccountingController {
   constructor(
     private cfg: AccountingSettingsService, private expenses: ExpensesService, private projects: ProjectsService,
-    private invoices: InvoicesService, private ledgerSvc: LedgerService,
+    private invoices: InvoicesService, private ledgerSvc: LedgerService, private analysis: AnalysisService,
   ) {}
 
   @Get('settings') @RequireAny(MANAGE) settings() { return this.cfg.settings(); }
   @Put('settings') @RequireAny(MANAGE) saveSettings(@CurrentUser() u: AuthUser, @Body() dto: SettingsDto) { return this.cfg.saveSettings(u, dto); }
   @Get('lookups') lookups(@CurrentUser() u: AuthUser) { return this.expenses.lookups(u); }
   @Get('ledger') @RequireAny(MANAGE) ledger(@Query() q: LedgerQuery) { return this.ledgerSvc.ledger(q); }
+  @Get('analysis/clients') @RequireAny(MANAGE) clientAnalysis(@Query() q: AnalysisQuery) { return this.analysis.clients(q); }
+  @Get('analysis/clients/:id') @RequireAny(MANAGE) clientDetailAnalysis(@Param('id', ParseUUIDPipe) id: string, @Query() q: AnalysisQuery) { return this.analysis.client(id, q); }
 
   @Get('categories') @RequireAny(MANAGE) categories(@Query() q: MonthQuery) { return this.expenses.categories(q); }
   @Post('categories') @RequireAny(MANAGE) createCategory(@CurrentUser() u: AuthUser, @Body() dto: CategoryDto) { return this.expenses.createCategory(u, dto); }

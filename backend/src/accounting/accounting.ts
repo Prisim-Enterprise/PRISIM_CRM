@@ -4,6 +4,7 @@ import { AccountingSettingsService } from './settings.service';
 import { ExpensesService } from './expenses.service';
 import { InvoicesService } from './invoices.service';
 import { LedgerService } from './ledger.service';
+import { AnalysisService } from './analysis.service';
 import { ProjectsService } from './projects.service';
 
 // Accounting is split by area:
@@ -14,8 +15,9 @@ import { ProjectsService } from './projects.service';
 //   projects.service.ts  client projects and their payments
 //   invoices.service.ts  tax invoices, payments, client invoice files
 //   ledger.service.ts    raw figures for the dashboard and reports
+//   analysis(.service).ts client-wise and whole-business analysis
 @Module({
-  providers: [AccountingSettingsService, ExpensesService, ProjectsService, InvoicesService, LedgerService],
+  providers: [AccountingSettingsService, ExpensesService, ProjectsService, InvoicesService, LedgerService, AnalysisService],
   controllers: [AccountingController],
 })
 export class AccountingModule {}

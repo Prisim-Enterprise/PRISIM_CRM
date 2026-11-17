@@ -29,6 +29,7 @@ import AccountingProjects, { ProjectPage as AccountingProject } from './pages/ac
 import AccountingInvoices, { InvoicePage as AccountingInvoice } from './pages/accounting/Invoices';
 import AccountingCategories from './pages/accounting/Categories';
 import AccountingReports from './pages/accounting/Reports';
+import AccountingClientAnalysis, { ClientAnalysisDetailPage as AccountingClientAnalysisDetail } from './pages/accounting/ClientAnalysis';
 import AccountingSettings from './pages/accounting/Settings';
 import Quotations, { QuotationEditor } from './pages/Quotations';
 import Profile from './pages/Profile';
@@ -80,6 +81,8 @@ function App() {
         <Route path="accounting/invoices/:id" element={<AccountingInvoice />} />
         <Route path="accounting/categories" element={<AccountingCategories />} />
         <Route path="accounting/reports" element={<AccountingReports />} />
+        <Route path="accounting/client-analysis" element={<AccountingClientAnalysis />} />
+        <Route path="accounting/client-analysis/:id" element={<AccountingClientAnalysisDetail />} />
         <Route path="accounting/settings" element={<AccountingSettings />} />
         <Route path="accounting/quotations" element={<Navigate to="/quotations" replace />} />
         <Route path="accounting/*" element={<Navigate to="/accounting/dashboard" replace />} />

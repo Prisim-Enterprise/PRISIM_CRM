@@ -618,6 +618,7 @@ model Client {
   acctProjects   AcctProject[]
   acctInvoices   AcctInvoice[]
   acctInvoiceFiles AcctInvoiceFile[]
+  acctExpenses   AcctExpense[]
   seoAccounts    SeoAccount[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
@@ -1129,6 +1130,9 @@ model AcctExpense {
   vendor        AcctVendor?       @relation(fields: [vendorId], references: [id], onDelete: SetNull)
   projectId     String?           @db.Uuid
   project       AcctProject?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  /// The client this cost was for. Set from the project when there is one; can also be set on its own.
+  clientId      String?           @db.Uuid
+  client        Client?           @relation(fields: [clientId], references: [id], onDelete: SetNull)
   paymentMethod AcctPaymentMethod @default(BANK_TRANSFER)
   status        AcctExpenseStatus @default(PENDING)
   description   String?
@@ -1150,6 +1154,7 @@ model AcctExpense {
   @@index([categoryId])
   @@index([vendorId])
   @@index([projectId])
+  @@index([clientId])
   @@index([submittedById])
   @@map("acct_expenses")
 }
