@@ -97,7 +97,14 @@ export const api = {
     const location = res.headers.get('x-file-location');
     const file = location ? await fetch(location) : res;
     if (!file.ok) throw new ApiError(file.status, 'The file could not be opened');
-    return URL.createObjectURL(await file.blob());
+    // Some files are stored gzipped to save space; unpack them so they open as uploaded.
+    const type = res.headers.get('x-file-type') ?? undefined;
+    if (res.headers.get('x-file-encoding') === 'gzip' && file.body) {
+      const unpacked = await new Response(file.body.pipeThrough(new DecompressionStream('gzip'))).blob();
+      return URL.createObjectURL(new Blob([unpacked], { type }));
+    }
+    const blob = await file.blob();
+    return URL.createObjectURL(type && blob.type !== type ? new Blob([blob], { type }) : blob);
   },
   download: async (path: string, query?: Query, fallbackName = 'download') => {
     const res = await fetch(BASE + path + qs(query), { headers: await baseHeaders() });

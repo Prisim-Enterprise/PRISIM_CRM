@@ -3,11 +3,11 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { format } from 'date-fns';
-import { ArrowLeft, Ban, FileText, Plus, Printer, RotateCcw, Save, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Ban, FileText, Plus, Printer, RotateCcw, Save, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errMsg } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
-import { Badge, Button, Card, Empty, ErrorBox, Field, Input, PageHeader, Select, Spinner, StatCard, Table, Td, Textarea, Th } from '../../components/ui';
+import { Badge, Button, Card, Empty, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, StatCard, Table, Td, Textarea, Th } from '../../components/ui';
 import {
   AccountingGate, ClientDetails, dayLabel, GST_STATES, Invoice, InvoiceExtra, INVOICE_STATUS, InvoiceItem, InvoiceStatus, METHODS, rupees, Settings, ShipTo,
   stateOf, todayIso, useLookups, useSettings,
@@ -18,6 +18,50 @@ const GST_RATES = [0, 5, 12, 18, 28];
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 /** 40,000.00 — Indian grouping, as on the printed invoice. */
 const amt = (n: number) => n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fileSize = (bytes: number) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+
+interface InvoiceFile {
+  /** sizeBytes is what is stored (after compression); originalBytes is what was uploaded. */
+  id: string; clientId: string; fileName: string; mimeType: string; sizeBytes: number; originalBytes: number; encoding: string | null; createdAt: string;
+}
+
+/** Longest side kept for photos and scans: about 210 dpi on an A4 page, so small print stays legible. */
+const MAX_IMAGE_SIDE = 1800;
+
+/**
+ * Shrinks invoice photos and scans before upload: resized to MAX_IMAGE_SIDE and saved as
+ * WebP or JPEG, whichever is smaller. PDFs are sent as they are; the server gzips them when that helps.
+ */
+async function compressInvoiceFile(file: File): Promise<File> {
+  if (file.type === 'application/pdf') return file;
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) throw new Error('Choose a PDF, PNG, JPG or WebP invoice');
+
+  const image = await createImageBitmap(file);
+  const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(image.width, image.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  const context = canvas.getContext('2d');
+  if (!context) { image.close(); throw new Error('This image could not be compressed'); }
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  image.close();
+
+  const encode = (type: string, quality: number) => new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality));
+  // Browsers that can't write WebP hand back a PNG instead; that is dropped below.
+  const candidates = (await Promise.all([encode('image/webp', 0.8), encode('image/jpeg', 0.8)]))
+    .filter((b): b is Blob => !!b && (b.type === 'image/webp' || b.type === 'image/jpeg'));
+  if (!candidates.length) throw new Error('This image could not be compressed');
+  const best = candidates.reduce((a, b) => (b.size < a.size ? b : a));
+  if (best.size >= file.size) return file;
+  const name = file.name.replace(/\.[^.]+$/, '') || 'invoice';
+  return new File([best], `${name}.${best.type === 'image/webp' ? 'webp' : 'jpg'}`, { type: best.type, lastModified: Date.now() });
+}
+
+/** "1.2 MB" or "1.2 MB (was 3.4 MB)" when compression saved space. */
+const storedSize = (f: Pick<InvoiceFile, 'sizeBytes' | 'originalBytes'>) =>
+  f.originalBytes > f.sizeBytes ? `${fileSize(f.sizeBytes)} (was ${fileSize(f.originalBytes)})` : fileSize(f.sizeBytes);
 
 /** Same maths as the server: CGST + SGST inside the company's state, IGST for a buyer in another state. */
 function totals(items: InvoiceItem[], discount: number, gstRate: number, buyerState: string, stateCode: string, paid: number) {
@@ -54,15 +98,59 @@ export default function Invoices() {
 function InvoicesPage() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<InvoiceStatus | ''>('');
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [clientId, setClientId] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [compressing, setCompressing] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const qc = useQueryClient();
+  const clients = useQuery({ queryKey: ['client-directory'], queryFn: () => api.get<{ id: string; name: string }[]>('/clients/directory'), staleTime: 60_000 });
+  const clientFiles = useQuery({
+    queryKey: ['acct-invoice-files', clientId], queryFn: () => api.get<InvoiceFile[]>(`/accounting/invoice-files/${clientId}`), enabled: !!clientId,
+  });
   const q = useQuery({ queryKey: ['acct-invoices', search, status], queryFn: () => api.get<Invoice[]>('/accounting/invoices', { search, status }) });
   const all = useQuery({ queryKey: ['acct-invoices', '', ''], queryFn: () => api.get<Invoice[]>('/accounting/invoices'), enabled: !!(search || status) });
   const base = (search || status ? all.data : q.data) ?? [];
   const live = base.filter((i) => !i.cancelled);
   const list = q.data ?? [];
+  const closeUpload = () => { if (!uploading) { setUploadOpen(false); setClientId(''); setFile(null); } };
+  const chooseFile = async (selected: File | undefined) => {
+    setFile(null);
+    if (!selected) return;
+    setCompressing(true);
+    try {
+      const prepared = await compressInvoiceFile(selected);
+      if (prepared.size > 25 * 1024 * 1024) throw new Error('Invoice files can be up to 25 MB after compression');
+      setFile(prepared);
+      toast.success(prepared.size < selected.size ? `Image compressed from ${fileSize(selected.size)} to ${fileSize(prepared.size)}` : 'File is ready to upload');
+    } catch (e) { toast.error(errMsg(e)); } finally { setCompressing(false); }
+  };
+  const uploadFile = async () => {
+    if (!clientId || !file) return;
+    setUploading(true);
+    try {
+      const saved = await api.upload<InvoiceFile>(`/accounting/invoice-files/${clientId}`, file);
+      await qc.invalidateQueries({ queryKey: ['acct-invoice-files', clientId] });
+      toast.success(saved.originalBytes > saved.sizeBytes ? `Invoice uploaded · stored as ${storedSize(saved)}` : 'Invoice uploaded');
+      setFile(null);
+    } catch (e) { toast.error(errMsg(e)); } finally { setUploading(false); }
+  };
+  const openFile = async (invoiceFile: InvoiceFile) => {
+    try { window.open(await api.blobUrl(`/accounting/invoice-files/${invoiceFile.id}/file`), '_blank', 'noopener,noreferrer'); }
+    catch (e) { toast.error(errMsg(e)); }
+  };
+  const deleteFile = async (invoiceFile: InvoiceFile) => {
+    if (!confirm(`Delete ${invoiceFile.fileName}?`)) return;
+    try {
+      await api.del(`/accounting/invoice-files/${invoiceFile.id}`);
+      await qc.invalidateQueries({ queryKey: ['acct-invoice-files', clientId] });
+      toast.success('Invoice file deleted');
+    } catch (e) { toast.error(errMsg(e)); }
+  };
   return (
     <div className="space-y-4">
       <PageHeader title="Invoices" subtitle="Tax invoices with GST, and the payments received. Make one from a quotation with “Create invoice” on the quotation."
-        actions={<Link to="/accounting/invoices/new"><Button><Plus className="h-4 w-4" />New invoice</Button></Link>} />
+        actions={<><Button variant="secondary" onClick={() => setUploadOpen(true)}><Upload className="h-4 w-4" />Upload invoice</Button><Link to="/accounting/invoices/new"><Button><Plus className="h-4 w-4" />New invoice</Button></Link></>} />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Invoiced" value={rupees(live.reduce((a, i) => a + i.total, 0))} sub={`${live.length} invoice${live.length === 1 ? '' : 's'}`} />
         <StatCard label="Received" value={rupees(live.reduce((a, i) => a + i.paid, 0))} tone="good" />
@@ -101,6 +189,35 @@ function InvoicesPage() {
           </Table>
         )}
       </Card>
+      <Modal open={uploadOpen} onClose={closeUpload} title="Upload client invoice" footer={<>
+        <Button variant="secondary" onClick={closeUpload} disabled={uploading}>Cancel</Button>
+        <Button onClick={uploadFile} loading={uploading} disabled={!clientId || !file || compressing}>Upload invoice</Button>
+      </>}>
+        <Field label="Client">
+          <Select value={clientId} onChange={(e) => { setClientId(e.target.value); setFile(null); }}>
+            <option value="">Select a client first</option>
+            {(clients.data ?? []).map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
+          </Select>
+        </Field>
+        <Field label="Invoice file" hint="PDF, PNG, JPG or WebP, up to 25 MB. Photos are resized and compressed before upload; PDFs are compressed on the server when that saves space.">
+          <Input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" disabled={!clientId || compressing || uploading} onChange={(e) => { void chooseFile(e.target.files?.[0]); e.target.value = ''; }} />
+        </Field>
+        {compressing && <p className="text-sm text-slate-500">Compressing image…</p>}
+        {file && <p className="text-sm text-slate-600">Ready: {file.name} · {fileSize(file.size)}</p>}
+        {clientId && <section>
+          <h3 className="mb-2 text-sm font-semibold">Uploaded invoices</h3>
+          {clientFiles.isLoading ? <Spinner /> : clientFiles.error ? <ErrorBox error={clientFiles.error} /> : !clientFiles.data?.length ? <p className="text-sm text-slate-500">No invoice files for this client yet.</p> : (
+            <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+              {clientFiles.data.map((invoiceFile) => <li key={invoiceFile.id} className="flex items-center gap-2 px-3 py-2 text-sm">
+                <FileText className="h-4 w-4 shrink-0 text-slate-400" />
+                <button className="min-w-0 flex-1 truncate text-left text-indigo-700 hover:underline" onClick={() => void openFile(invoiceFile)}>{invoiceFile.fileName}</button>
+                <span className="shrink-0 text-xs text-slate-500" title="Size as stored">{storedSize(invoiceFile)}</span>
+                <button className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600" title="Delete invoice file" onClick={() => void deleteFile(invoiceFile)}><Trash2 className="h-4 w-4" /></button>
+              </li>)}
+            </ul>
+          )}
+        </section>}
+      </Modal>
     </div>
   );
 }

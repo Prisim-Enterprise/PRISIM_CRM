@@ -34,7 +34,7 @@ export function setupApp(app: NestExpressApplication) {
     }
     next();
   });
-  app.enableCors({ origin: (process.env.WEB_ORIGIN || 'http://localhost:5173').split(',').map((o) => o.trim().replace(/\/$/, '')), credentials: false });
+  app.enableCors({ origin: (process.env.WEB_ORIGIN || 'http://localhost:5173').split(',').map((o) => o.trim().replace(/\/$/, '')), credentials: false, exposedHeaders: ['X-File-Location', 'X-File-Type', 'X-File-Encoding', 'Content-Disposition'] });
   app.useBodyParser('json', { limit: '1mb' });
   app.useBodyParser('urlencoded', { extended: true, limit: '1mb' });
   app.setGlobalPrefix('api/v1', { exclude: ['health'] });

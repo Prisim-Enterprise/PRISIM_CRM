@@ -90,7 +90,15 @@ export class StorageService {
   }
 
   /** Streams a stored file with HTTP range support (needed for audio seeking). */
-  async send(res: Response, key: string, mimeType: string, rangeHeader?: string, downloadName?: string) {
+  async send(res: Response, key: string, mimeType: string, rangeHeader?: string, downloadName?: string, encoding?: string | null) {
+    // A file stored gzipped (see compressForStorage) is sent as stored; the web app unpacks it
+    // using these headers. Storage links can't carry Content-Encoding, so this works for both paths.
+    res.setHeader('X-File-Type', mimeType);
+    if (encoding) {
+      res.setHeader('X-File-Encoding', encoding);
+      mimeType = 'application/gzip';
+      rangeHeader = undefined;
+    }
     if (this.remote) {
       // Hosted API replies are limited to about 4.5 MB, so the browser fetches the file from a short-lived link.
       const signed = await this.call(`/object/sign/${BUCKET}/${key}`, {

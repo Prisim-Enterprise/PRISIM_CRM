@@ -1,5 +1,5 @@
 import { DEFAULT_MAPPING, normalizeRow, parseCsv, parseSheetDate, resolveColumns, rowsToObjects } from './lead-ingest';
-import { parseSheetRef, toLeadRecords } from './integrations';
+import { parseSheetRef, toLeadRecords } from './lead-ingest';
 
 describe('website sheet columns', () => {
   it('detects common website-form headers without any mapping', () => {

@@ -21,7 +21,11 @@ import { LeadsModule } from '../leads/leads.controller';
 import { LeadsService } from '../leads/leads.service';
 import {
   DEFAULT_MAPPING, FieldMapping, headerKey, NormalizedLead, normalizeRow, parseCsv, resolveColumns, RowRejected, rowsToObjects,
+  parseSheetRef, toLeadRecords,
 } from './lead-ingest';
+
+// Pure helpers live in lead-ingest so tests can import them without Nest/googleapis.
+export { parseSheetRef, toLeadRecords };
 
 interface SheetsConfig {
   spreadsheetId?: string;
@@ -83,14 +87,6 @@ type Row = { rowNumber: number; data: Record<string, string> };
 
 /** Source-managed fields: sync may update these unless a user has edited them in the CRM. */
 const SOURCE_FIELDS = ['fullName', 'phoneE164', 'email', 'city', 'campaignName', 'adsetName', 'adName', 'formName', 'sourceCreatedAt'] as const;
-
-/** Accepts a bare spreadsheet ID or any Google Sheets URL. */
-export function parseSheetRef(input: string): { spreadsheetId: string; gid?: string } {
-  const v = input.trim();
-  const id = /\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/.exec(v)?.[1] ?? v;
-  const gid = /[#?&]gid=(\d+)/.exec(v)?.[1];
-  return { spreadsheetId: id, gid };
-}
 
 const blank = (r: Row) => !Object.values(r.data).some((v) => v.trim());
 
@@ -611,37 +607,6 @@ export class LeadSyncService {
       }
     }
   }
-}
-
-/** Normalises a webhook body into flat string records keyed like sheet headers. */
-export function toLeadRecords(body: unknown): Record<string, string>[] {
-  let list: unknown[] = [];
-  if (Array.isArray(body)) list = body;
-  else if (body && typeof body === 'object') {
-    const b = body as Record<string, unknown>;
-    const nested = b.leads ?? b.records ?? b.entries ?? (Array.isArray(b.data) ? b.data : null);
-    list = Array.isArray(nested) ? nested : b.data && typeof b.data === 'object' ? [b.data] : [b];
-  }
-  return list
-    .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x))
-    .map((obj) => {
-      const out: Record<string, string> = {};
-      const put = (k: string, v: unknown) => {
-        const key = headerKey(k);
-        if (!key || v === null || v === undefined || typeof v === 'object') return;
-        if (!(key in out)) out[key] = String(v).slice(0, 2000);
-      };
-      for (const [k, v] of Object.entries(obj)) {
-        if (Array.isArray(v) && v.every((x) => x && typeof x === 'object' && 'name' in x && 'values' in x)) {
-          // Meta / Facebook style: field_data: [{ name: 'phone_number', values: ['…'] }]
-          for (const f of v as { name: string; values: unknown[] }[]) put(f.name, f.values?.[0]);
-        } else if (v && typeof v === 'object' && !Array.isArray(v)) {
-          for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) put(k2, v2); // one level, e.g. {contact:{phone}}
-        } else put(k, v);
-      }
-      return out;
-    })
-    .filter((r) => Object.keys(r).length > 0);
 }
 
 @ApiTags('Integrations')

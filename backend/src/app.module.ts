@@ -1,4 +1,5 @@
-import { Controller, Get, Module } from '@nestjs/common';
+import { Controller, Get, Module, ServiceUnavailableException } from '@nestjs/common';
+import { JOBS_KEY, tickHealth } from './jobs/heartbeat';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -34,7 +35,14 @@ class HealthController {
   @Get()
   async health() {
     await this.prisma.$queryRaw`SELECT 1`;
-    return { status: 'ok', time: new Date().toISOString() };
+    const now = new Date();
+    if (!process.env.VERCEL) return { status: 'ok', time: now.toISOString() };
+    // On Vercel, reminders and syncs only run when the external scheduler calls /internal/tick.
+    // Report a stalled scheduler as 503 so an uptime monitor raises the alarm.
+    const row = await this.prisma.integrationConfig.findUnique({ where: { key: JOBS_KEY }, select: { state: true } });
+    const jobs = tickHealth((row?.state as { lastTickAt?: string } | null)?.lastTickAt, now);
+    if (jobs !== 'ok') throw new ServiceUnavailableException({ status: 'degraded', jobs, time: now.toISOString() });
+    return { status: 'ok', jobs, time: now.toISOString() };
   }
 }
 

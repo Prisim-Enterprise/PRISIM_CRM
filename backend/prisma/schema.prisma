@@ -617,6 +617,7 @@ model Client {
   quotations     Quotation[]
   acctProjects   AcctProject[]
   acctInvoices   AcctInvoice[]
+  acctInvoiceFiles AcctInvoiceFile[]
   seoAccounts    SeoAccount[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
@@ -1230,6 +1231,26 @@ model AcctInvoice {
   @@index([clientId])
   @@index([projectId])
   @@map("acct_invoices")
+}
+
+model AcctInvoiceFile {
+  id           String   @id @default(uuid()) @db.Uuid
+  clientId     String   @db.Uuid
+  client       Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  storageKey   String   @unique
+  fileName     String
+  mimeType     String
+  /// Bytes as stored (after compression).
+  sizeBytes    Int
+  /// Bytes as uploaded, before server-side compression.
+  originalBytes Int
+  /// "gzip" when stored gzipped; null when stored as uploaded.
+  encoding     String?
+  uploadedById String   @db.Uuid
+  createdAt    DateTime @default(now())
+
+  @@index([clientId, createdAt])
+  @@map("acct_invoice_files")
 }
 
 model AcctInvoicePayment {

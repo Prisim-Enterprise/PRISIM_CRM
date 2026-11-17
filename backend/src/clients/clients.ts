@@ -203,8 +203,10 @@ export class ClientsService {
     const c = await this.prisma.client.findUnique({ where: { id } });
     if (!c) throw new NotFoundException('Client not found');
     const files = await this.prisma.attachment.findMany({ where: { clientWork: { clientId: id } } });
+    const invoiceFiles = await this.prisma.acctInvoiceFile.findMany({ where: { clientId: id }, select: { storageKey: true } });
     await this.prisma.client.delete({ where: { id } });
-    for (const f of files) await this.storage.remove(f.storageKey);
+    // The client row is already gone, so a storage hiccup must not turn this into an error.
+    await Promise.all([...files, ...invoiceFiles].map((f) => this.storage.remove(f.storageKey).catch(() => undefined)));
     await this.audit.record({ actorId: user.id, action: 'client.deleted', entityType: 'client', entityId: id, before: { name: c.name } });
     return { ok: true };
   }

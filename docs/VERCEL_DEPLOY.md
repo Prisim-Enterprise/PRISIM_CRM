@@ -47,3 +47,11 @@ Schema changes are not applied by Vercel. Run `npm run prisma:deploy -w backend`
 - Vercel also limits a reply to about 4.5 MB, which affects very large CSV exports from the Leads page.
 - A function stops after 60 seconds, so a very large CSV import or sheet re-read may need splitting.
 - The mock telephony provider relies on timers, which do not run once a function has replied. Use a real provider in production.
+
+## Watching the scheduled jobs
+
+Reminders, sheet syncs and the nightly reconciliation only run when Supabase calls `/api/v1/internal/tick`.
+Each tick saves its time (and any job that failed) in the `integration_configs` row with key `jobs`.
+On Vercel, `GET /api/v1/health` returns **503** with `"jobs": "stale"` (or `"never"`) when no tick has
+arrived for five minutes. Point an uptime monitor (UptimeRobot, Better Stack, etc.) at that URL so a
+stopped scheduler is noticed. A failing job shows in the tick response (`failed: [...]`) and in the Vercel logs.

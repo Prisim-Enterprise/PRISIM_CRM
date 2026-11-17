@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Tests only transpile; `tsc --noEmit` and `nest build` do the type-checking.
+    "isolatedModules": true
+  }
+}
