@@ -2,7 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerQuery } from './dto';
 import { AccountingSettingsService } from './settings.service';
-import { day, invoiceInclude, iso, num, person, r2, shapeInvoice } from './shared';
+import { day, invoiceInclude, invoiceStatus, iso, num, person, r2, shapeInvoice, today } from './shared';
 
 /** The raw figures behind the accounting dashboard and reports. */
 @Injectable()
@@ -31,7 +31,16 @@ export class LedgerService {
       this.prisma.acctCategory.findMany({ select: { id: true, name: true, parentId: true, monthlyBudget: true, annualBudget: true, sortOrder: true, archived: true } }),
       this.cfg.settings(),
     ]);
-    const shapedInvoices = invoices.map((i) => shapeInvoice(i, s));
+    // Uploaded invoices with their details count alongside the CRM's own.
+    const files = await this.prisma.acctInvoiceFile.findMany({ where: { amount: { not: null } }, select: { amount: true, amountReceived: true, invoiceDate: true, dueDate: true } });
+    const todayKey = today();
+    const shapedInvoices = [
+      ...invoices.map((i) => shapeInvoice(i, s)),
+      ...files.map((f) => {
+        const total = num(f.amount), paid = num(f.amountReceived);
+        return { date: iso(f.invoiceDate) ?? '', total, balance: r2(Math.max(0, total - paid)), status: invoiceStatus(false, total, paid, iso(f.dueDate), todayKey) };
+      }),
+    ];
     const overdue = shapedInvoices.filter((i) => i.status === 'overdue');
     return {
       fyStartMonth: s.fyStartMonth,

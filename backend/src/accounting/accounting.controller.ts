@@ -4,7 +4,7 @@ import type { Response } from 'express';
 import { FileUpload } from '../common/file-upload';
 import { AuthUser, CurrentUser, RequireAny } from '../common/current-user';
 import {
-  AnalysisQuery, CategoryDto, DeleteManyDto, ExpenseDto, ExpenseQuery, InvoiceDto, InvoiceQuery, LedgerQuery, MonthQuery, NextNumberQuery, PaymentDto, ProjectDto,
+  AnalysisQuery, CategoryDto, DeleteManyDto, ExpenseDto, ExpenseQuery, InvoiceDto, InvoiceFileDetailsDto, InvoiceQuery, LedgerQuery, MonthQuery, NextNumberQuery, PaymentDto, ProjectDto,
   ProjectQuery, ReceiptParams, ReviewDto, SettingsDto, UpdateCategoryDto, UpdateExpenseDto, UpdateInvoiceDto, UpdateProjectDto,
 } from './dto';
 import { AccountingSettingsService } from './settings.service';
@@ -68,6 +68,8 @@ export class AccountingController {
   }
   @Get('invoice-files/:id/file') @RequireAny(MANAGE)
   clientInvoiceFile(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response) { return this.invoices.clientInvoiceFile(id, res); }
+  @Patch('invoice-files/:id') @RequireAny(MANAGE)
+  updateInvoiceFileDetails(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: InvoiceFileDetailsDto) { return this.invoices.updateInvoiceFileDetails(u, id, dto); }
   @Delete('invoice-files/:id') @RequireAny(MANAGE)
   removeClientInvoiceFile(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.invoices.removeClientInvoiceFile(u, id); }
 

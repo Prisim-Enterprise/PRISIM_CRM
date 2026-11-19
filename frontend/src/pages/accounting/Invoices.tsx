@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { format } from 'date-fns';
-import { ArrowLeft, Ban, Download, FileText, Plus, Printer, RotateCcw, Save, Trash2, Upload, X } from 'lucide-react';
+import { ArrowLeft, Ban, Download, FileText, Pencil, Plus, Printer, RotateCcw, Save, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errMsg } from '../../lib/api';
 import { compressInvoiceUpload } from '../../lib/compressUpload';
@@ -24,10 +24,76 @@ const fileSize = (bytes: number) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFi
 interface InvoiceFile {
   /** sizeBytes is what is stored (after compression); originalBytes is what was uploaded. */
   id: string; clientId: string; fileName: string; mimeType: string; sizeBytes: number; originalBytes: number; encoding: string | null; createdAt: string;
+  /** The invoice's own details, entered on upload. Null until they are added (files uploaded before this). */
+  invoiceNumber: string | null; invoiceDate: string | null; dueDate: string | null; amount: number | null; amountReceived: number;
+  balance: number | null; status: Exclude<InvoiceStatus, 'cancelled'> | null;
+}
+interface FileDetails { invoiceNumber: string; invoiceDate: string; dueDate: string; amount: string; amountReceived: string }
+
+/** Checks an uploaded invoice's details; returns the request body, or shows what is wrong and returns null. */
+function detailsBody(d: FileDetails) {
+  const amount = r2(Number(d.amount) || 0), received = r2(Number(d.amountReceived) || 0);
+  if (!d.invoiceNumber.trim()) { toast.error('Add the invoice number'); return null; }
+  if (!d.invoiceDate) { toast.error('Add the invoice date'); return null; }
+  if (!(amount > 0)) { toast.error('Add the invoice total'); return null; }
+  if (received > amount) { toast.error('The amount received is more than the total'); return null; }
+  if (d.dueDate && d.dueDate < d.invoiceDate) { toast.error('The due date is before the invoice date'); return null; }
+  return { invoiceNumber: d.invoiceNumber.trim(), invoiceDate: d.invoiceDate, dueDate: d.dueDate || null, amount, amountReceived: received };
+}
+
+const openInvoiceFile = async (f: Pick<InvoiceFile, 'id'>) => {
+  try { window.open(await api.blobUrl(`/accounting/invoice-files/${f.id}/file`), '_blank', 'noopener,noreferrer'); }
+  catch (e) { toast.error(errMsg(e)); }
+};
+
+/** Number, dates, total and amount received for an uploaded invoice. */
+function DetailsFields({ d, onChange }: { d: FileDetails; onChange: (d: FileDetails) => void }) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <Field label="Invoice number"><Input value={d.invoiceNumber} onChange={(e) => onChange({ ...d, invoiceNumber: e.target.value })} placeholder="2026-27/14" /></Field>
+      <Field label="Invoice total (₹)" hint="Including GST"><Input type="number" min={0} step="0.01" value={d.amount} onChange={(e) => onChange({ ...d, amount: e.target.value })} /></Field>
+      <Field label="Invoice date"><Input type="date" value={d.invoiceDate} onChange={(e) => onChange({ ...d, invoiceDate: e.target.value })} /></Field>
+      <Field label="Due date (optional)"><Input type="date" value={d.dueDate} onChange={(e) => onChange({ ...d, dueDate: e.target.value })} /></Field>
+      <Field label="Amount received so far (₹)" hint="Update it as payments come in"><Input type="number" min={0} step="0.01" value={d.amountReceived} onChange={(e) => onChange({ ...d, amountReceived: e.target.value })} placeholder="0" /></Field>
+    </div>
+  );
+}
+
+/** Adds or changes the details of an uploaded invoice. */
+function FileDetailsModal({ f, clientName, onClose }: { f: InvoiceFile; clientName?: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [d, setD] = useState<FileDetails>({
+    invoiceNumber: f.invoiceNumber ?? '', invoiceDate: f.invoiceDate ?? f.createdAt.slice(0, 10), dueDate: f.dueDate ?? '',
+    amount: f.amount == null ? '' : String(f.amount), amountReceived: f.amountReceived ? String(f.amountReceived) : '',
+  });
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    const body = detailsBody(d);
+    if (!body) return;
+    setBusy(true);
+    try {
+      await api.patch(`/accounting/invoice-files/${f.id}`, body);
+      await qc.invalidateQueries({ queryKey: ['acct-invoice-files'] });
+      toast.success('Invoice details saved');
+      onClose();
+    } catch (e) { toast.error(errMsg(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Modal open wide onClose={() => !busy && onClose()} title={`Invoice details${clientName ? ` · ${clientName}` : ''}`} footer={<>
+      <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
+      <Button onClick={save} loading={busy}><Save className="h-4 w-4" />Save</Button>
+    </>}>
+      <p className="text-sm text-slate-600">File: <button className="text-indigo-700 hover:underline" onClick={() => void openInvoiceFile(f)}>{f.fileName}</button></p>
+      <DetailsFields d={d} onChange={setD} />
+    </Modal>
+  );
 }
 
 /** An invoice file as the client-wise list returns it. */
 interface ListedInvoiceFile extends InvoiceFile { client: { id: string; name: string; status: string }; uploadedBy: string | null }
+
+/** One row of the Invoices list: an invoice made in the CRM, or an uploaded one. */
+type Row = { kind: 'crm'; date: string; inv: Invoice } | { kind: 'file'; date: string; f: ListedInvoiceFile };
 
 /** "1.2 MB" or "1.2 MB (was 3.4 MB)" when compression saved space. */
 const storedSize = (f: Pick<InvoiceFile, 'sizeBytes' | 'originalBytes'>) =>
@@ -68,6 +134,7 @@ export default function Invoices() {
 type PageTab = 'invoices' | 'uploaded';
 
 function InvoicesPage() {
+  const settings = useSettings();
   const [params, setParams] = useSearchParams();
   const tab: PageTab = params.get('tab') === 'uploaded' ? 'uploaded' : 'invoices';
   const setTab = (t: PageTab) => setParams(t === 'invoices' ? {} : { tab: t }, { replace: true });
@@ -81,17 +148,30 @@ function InvoicesPage() {
   const [compressing, setCompressing] = useState(false);
   const [prepNote, setPrepNote] = useState('');
   const [uploading, setUploading] = useState(false);
+  const blankDetails = (): FileDetails => ({ invoiceNumber: '', invoiceDate: todayIso(), dueDate: settings.data ? addDays(todayIso(), settings.data.invoiceDueDays) : '', amount: '', amountReceived: '' });
+  const [details, setDetails] = useState<FileDetails>({ invoiceNumber: '', invoiceDate: todayIso(), dueDate: '', amount: '', amountReceived: '' });
+  const [editingFile, setEditingFile] = useState<ListedInvoiceFile | null>(null);
   const qc = useQueryClient();
   const clients = useQuery({ queryKey: ['client-directory'], queryFn: () => api.get<{ id: string; name: string }[]>('/clients/directory'), staleTime: 60_000 });
   const files = useQuery({ queryKey: ['acct-invoice-files'], queryFn: () => api.get<ListedInvoiceFile[]>('/accounting/invoice-files') });
   const q = useQuery({ queryKey: ['acct-invoices', search, status], queryFn: () => api.get<Invoice[]>('/accounting/invoices', { search, status }) });
   const all = useQuery({ queryKey: ['acct-invoices', '', ''], queryFn: () => api.get<Invoice[]>('/accounting/invoices'), enabled: !!(search || status) });
   const base = (search || status ? all.data : q.data) ?? [];
-  const live = base.filter((i) => !i.cancelled);
-  const list = q.data ?? [];
-  const resetUpload = () => { setUploadOpen(false); setClientId(''); setFile(null); setPrepNote(''); };
+  // Uploaded invoices with their details count in the totals like the CRM's own.
+  const uploaded = (files.data ?? []).filter((f) => f.amount != null);
+  const live = [
+    ...base.filter((i) => !i.cancelled).map((i) => ({ total: i.total, paid: i.paid, balance: i.balance, status: i.status as string })),
+    ...uploaded.map((f) => ({ total: f.amount!, paid: f.amountReceived, balance: f.balance!, status: f.status as string })),
+  ];
+  const term = search.trim().toLowerCase();
+  const fileRows: Row[] = (files.data ?? [])
+    .filter((f) => (!status || f.status === status) && (!term || [f.invoiceNumber, f.client.name, f.fileName].some((x) => x?.toLowerCase().includes(term))))
+    .map((f) => ({ kind: 'file', date: f.invoiceDate ?? f.createdAt.slice(0, 10), f }));
+  // Newest first, the CRM's and uploaded invoices together.
+  const list: Row[] = [...(q.data ?? []).map((inv): Row => ({ kind: 'crm', date: inv.date, inv })), ...fileRows].sort((a, b) => b.date.localeCompare(a.date));
+  const resetUpload = () => { setUploadOpen(false); setClientId(''); setFile(null); setPrepNote(''); setDetails(blankDetails()); };
   const closeUpload = () => { if (!uploading) resetUpload(); };
-  const openUpload = (forClient = '') => { setClientId(forClient); setFile(null); setPrepNote(''); setUploadOpen(true); };
+  const openUpload = (forClient = '') => { setClientId(forClient); setFile(null); setPrepNote(''); setDetails(blankDetails()); setUploadOpen(true); };
   const chooseFile = async (selected: File | undefined) => {
     setFile(null); setPrepNote('');
     if (!selected) return;
@@ -109,14 +189,27 @@ function InvoicesPage() {
   };
   const uploadFile = async () => {
     if (!clientId || !file) return;
+    const body = detailsBody(details);
+    if (!body) return;
     setUploading(true);
+    let saved: InvoiceFile | null = null;
     try {
-      const saved = await api.upload<InvoiceFile>(`/accounting/invoice-files/${clientId}`, file);
+      saved = await api.upload<InvoiceFile>(`/accounting/invoice-files/${clientId}`, file);
+      await api.patch(`/accounting/invoice-files/${saved.id}`, body);
       await qc.invalidateQueries({ queryKey: ['acct-invoice-files'] });
-      toast.success(saved.originalBytes > saved.sizeBytes ? `Invoice uploaded · stored as ${storedSize(saved)}` : 'Invoice uploaded');
-      // Close the window and show the file under its client.
-      resetUpload(); setFileClient(saved.clientId); setTab('uploaded');
-    } catch (e) { toast.error(errMsg(e)); } finally { setUploading(false); }
+      toast.success(`Invoice ${body.invoiceNumber} uploaded${saved.originalBytes > saved.sizeBytes ? ` · stored as ${storedSize(saved)}` : ''}`);
+      // Close the window and show it in the Invoices list.
+      resetUpload(); setSearch(''); setStatus(''); setTab('invoices');
+    } catch (e) {
+      toast.error(errMsg(e));
+      if (saved) {
+        // The file is stored but its details were not: close and open the details to fix them.
+        await qc.invalidateQueries({ queryKey: ['acct-invoice-files'] });
+        const listed = (await qc.fetchQuery({ queryKey: ['acct-invoice-files'], queryFn: () => api.get<ListedInvoiceFile[]>('/accounting/invoice-files') })).find((x) => x.id === saved!.id);
+        resetUpload();
+        if (listed) setEditingFile(listed);
+      }
+    } finally { setUploading(false); }
   };
   return (
     <div className="space-y-4">
@@ -126,7 +219,7 @@ function InvoicesPage() {
         { value: 'invoices', label: 'Invoices' },
         { value: 'uploaded', label: 'Uploaded invoices', count: files.data?.length },
       ]} />
-      {tab === 'uploaded' ? <UploadedInvoices files={files} client={fileClient} onClient={setFileClient} onUpload={openUpload} /> : <>
+      {tab === 'uploaded' ? <UploadedInvoices files={files} client={fileClient} onClient={setFileClient} onUpload={openUpload} onEdit={setEditingFile} /> : <>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Invoiced" value={rupees(live.reduce((a, i) => a + i.total, 0))} sub={`${live.length} invoice${live.length === 1 ? '' : 's'}`} />
         <StatCard label="Received" value={rupees(live.reduce((a, i) => a + i.paid, 0))} tone="good" />
@@ -141,7 +234,7 @@ function InvoicesPage() {
         </Select>
       </div>
       <Card>
-        {q.isLoading ? <Spinner /> : q.error ? <div className="p-4"><ErrorBox error={q.error} /></div> : !list.length ? (
+        {q.isLoading || files.isLoading ? <Spinner /> : q.error ? <div className="p-4"><ErrorBox error={q.error} /></div> : !list.length ? (
           <Empty title={search || status ? 'No invoices match' : 'No invoices yet'} icon={<FileText className="h-9 w-9" />}>
             <Link to="/accounting/invoices/new"><Button className="mt-3"><Plus className="h-4 w-4" />New invoice</Button></Link>
           </Empty>
@@ -149,7 +242,7 @@ function InvoicesPage() {
           <Table>
             <thead><tr><Th>Number</Th><Th>Client</Th><Th>Date</Th><Th>Due</Th><Th className="text-right">Total</Th><Th className="text-right">Received</Th><Th className="text-right">Balance</Th><Th>Status</Th></tr></thead>
             <tbody>
-              {list.map((i) => (
+              {list.map((row) => row.kind === 'crm' ? (() => { const i = row.inv; return (
                 <tr key={i.id} className={clsx('hover:bg-slate-50', i.cancelled && 'opacity-60')}>
                   <Td><Link to={`/accounting/invoices/${i.id}`} className="font-mono font-medium text-indigo-700 hover:underline">{i.number}</Link></Td>
                   <Td><Link to={`/accounting/invoices/${i.id}`} className="font-medium text-slate-900 hover:underline">{i.clientName}</Link>{i.project && <p className="text-xs text-slate-500">{i.project.title}</p>}</Td>
@@ -160,15 +253,34 @@ function InvoicesPage() {
                   <Td className="text-right font-medium tabular-nums">{rupees(i.balance)}</Td>
                   <Td><Badge className={INVOICE_STATUS[i.status].color}>{INVOICE_STATUS[i.status].label}</Badge></Td>
                 </tr>
-              ))}
+              ); })() : (() => { const f = row.f; return (
+                <tr key={f.id} className="hover:bg-slate-50">
+                  <Td>
+                    <span className="flex items-center gap-1.5">
+                      {f.invoiceNumber
+                        ? <button className="font-mono font-medium text-indigo-700 hover:underline" onClick={() => void openInvoiceFile(f)} title={`Open ${f.fileName}`}>{f.invoiceNumber}</button>
+                        : <button className="text-sm font-medium text-amber-700 hover:underline" onClick={() => setEditingFile(f)}>Add details</button>}
+                      <Badge className="bg-slate-100 text-slate-600" >Uploaded</Badge>
+                      <button className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="Edit details or amount received" onClick={() => setEditingFile(f)}><Pencil className="h-3.5 w-3.5" /></button>
+                    </span>
+                  </Td>
+                  <Td><span className="font-medium text-slate-900">{f.client.name}</span></Td>
+                  <Td className="whitespace-nowrap">{dayLabel(f.invoiceDate)}</Td>
+                  <Td className="whitespace-nowrap">{dayLabel(f.dueDate)}</Td>
+                  <Td className="text-right tabular-nums">{f.amount == null ? '—' : rupees(f.amount)}</Td>
+                  <Td className="text-right tabular-nums">{f.amount == null ? '—' : rupees(f.amountReceived)}</Td>
+                  <Td className="text-right font-medium tabular-nums">{f.balance == null ? '—' : rupees(f.balance)}</Td>
+                  <Td>{f.status ? <Badge className={INVOICE_STATUS[f.status].color}>{INVOICE_STATUS[f.status].label}</Badge> : <Badge className="bg-amber-50 text-amber-700">Details missing</Badge>}</Td>
+                </tr>
+              ); })())}
             </tbody>
           </Table>
         )}
       </Card>
       </>}
-      <Modal open={uploadOpen} onClose={closeUpload} title="Upload client invoice" footer={<>
+      <Modal open={uploadOpen} onClose={closeUpload} wide title="Upload client invoice" footer={<>
         <Button variant="secondary" onClick={closeUpload} disabled={uploading}>Cancel</Button>
-        <Button onClick={uploadFile} loading={uploading} disabled={!clientId || !file || compressing}>Upload invoice</Button>
+        <Button onClick={uploadFile} loading={uploading} disabled={!clientId || !file || compressing || !details.invoiceNumber.trim() || !(Number(details.amount) > 0)}>Upload invoice</Button>
       </>}>
         <Field label="Client">
           <Select value={clientId} onChange={(e) => { setClientId(e.target.value); setFile(null); }}>
@@ -181,15 +293,17 @@ function InvoicesPage() {
         </Field>
         {compressing && <p className="text-sm text-slate-500">Compressing to 1 MB or less… large PDFs can take a few seconds.</p>}
         {file && <p className="text-sm text-slate-600">Ready: {file.name} · {fileSize(file.size)}{prepNote && ` · ${prepNote}`}</p>}
+        <DetailsFields d={details} onChange={setDetails} />
       </Modal>
+      {editingFile && <FileDetailsModal f={editingFile} clientName={editingFile.client.name} onClose={() => setEditingFile(null)} />}
     </div>
   );
 }
 
 // ───────────────────────── Uploaded invoice files, client-wise ─────────────────────────
 
-function UploadedInvoices({ files, client, onClient, onUpload }: {
-  files: UseQueryResult<ListedInvoiceFile[]>; client: string; onClient: (id: string) => void; onUpload: (clientId: string) => void;
+function UploadedInvoices({ files, client, onClient, onUpload, onEdit }: {
+  files: UseQueryResult<ListedInvoiceFile[]>; client: string; onClient: (id: string) => void; onUpload: (clientId: string) => void; onEdit: (f: ListedInvoiceFile) => void;
 }) {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
@@ -202,7 +316,7 @@ function UploadedInvoices({ files, client, onClient, onUpload }: {
     const m = new Map<string, { client: ListedInvoiceFile['client']; files: ListedInvoiceFile[] }>();
     for (const f of all) {
       if (shownClient && f.client.id !== shownClient) continue;
-      if (term && !f.fileName.toLowerCase().includes(term) && !f.client.name.toLowerCase().includes(term)) continue;
+      if (term && ![f.fileName, f.client.name, f.invoiceNumber].some((x) => x?.toLowerCase().includes(term))) continue;
       const g = m.get(f.client.id) ?? { client: f.client, files: [] };
       g.files.push(f);
       m.set(f.client.id, g);
@@ -210,10 +324,7 @@ function UploadedInvoices({ files, client, onClient, onUpload }: {
     return [...m.values()].sort((a, b) => a.client.name.localeCompare(b.client.name));
   }, [all, shownClient, term]);
 
-  const open = async (f: InvoiceFile) => {
-    try { window.open(await api.blobUrl(`/accounting/invoice-files/${f.id}/file`), '_blank', 'noopener,noreferrer'); }
-    catch (e) { toast.error(errMsg(e)); }
-  };
+  const open = openInvoiceFile;
   const download = async (f: InvoiceFile) => {
     try {
       const url = await api.blobUrl(`/accounting/invoice-files/${f.id}/file`);
@@ -250,26 +361,32 @@ function UploadedInvoices({ files, client, onClient, onUpload }: {
           <option value="">All clients ({clients.length})</option>
           {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search file or client…" className="w-64" aria-label="Search files" />
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search number, file or client…" className="w-64" aria-label="Search files" />
       </div>
       {!groups.length ? <Card><Empty title="No files match" icon={<FileText className="h-9 w-9" />} /></Card> : groups.map((g) => (
         <Card key={g.client.id}
           title={<span>{g.client.name} <span className="font-normal text-slate-500">· {g.files.length} file{g.files.length === 1 ? '' : 's'}</span></span>}
           actions={<Button variant="secondary" onClick={() => onUpload(g.client.id)}><Upload className="h-4 w-4" />Upload</Button>}>
           <Table>
-            <thead><tr><Th>File</Th><Th>Uploaded</Th><Th>By</Th><Th className="text-right">Size</Th><Th className="text-right"><span className="sr-only">Actions</span></Th></tr></thead>
+            <thead><tr><Th>Invoice</Th><Th>File</Th><Th className="text-right">Total</Th><Th className="text-right">Balance</Th><Th>Status</Th><Th>Uploaded</Th><Th className="text-right"><span className="sr-only">Actions</span></Th></tr></thead>
             <tbody>
               {g.files.map((f) => (
                 <tr key={f.id} className="hover:bg-slate-50">
+                  <Td className="whitespace-nowrap">
+                    {f.invoiceNumber ? <><p className="font-mono font-medium">{f.invoiceNumber}</p><p className="text-xs text-slate-500">{dayLabel(f.invoiceDate)}</p></>
+                      : <button className="text-sm font-medium text-amber-700 hover:underline" onClick={() => onEdit(f)}>Add details</button>}
+                  </Td>
                   <Td>
-                    <button className="flex max-w-[22rem] items-center gap-2 text-left text-indigo-700 hover:underline" onClick={() => void open(f)} title="Open">
+                    <button className="flex max-w-[16rem] items-center gap-2 text-left text-indigo-700 hover:underline" onClick={() => void open(f)} title={`Open · ${storedSize(f)}`}>
                       <FileText className="h-4 w-4 shrink-0 text-slate-400" /><span className="truncate">{f.fileName}</span>
                     </button>
                   </Td>
-                  <Td className="whitespace-nowrap">{format(new Date(f.createdAt), 'd MMM yyyy, h:mm a')}</Td>
-                  <Td>{f.uploadedBy ?? '—'}</Td>
-                  <Td className="whitespace-nowrap text-right tabular-nums">{storedSize(f)}</Td>
+                  <Td className="whitespace-nowrap text-right tabular-nums">{f.amount == null ? '—' : rupees(f.amount)}</Td>
+                  <Td className="whitespace-nowrap text-right tabular-nums">{f.balance == null ? '—' : rupees(f.balance)}</Td>
+                  <Td>{f.status ? <Badge className={INVOICE_STATUS[f.status].color}>{INVOICE_STATUS[f.status].label}</Badge> : <Badge className="bg-amber-50 text-amber-700">Details missing</Badge>}</Td>
+                  <Td className="whitespace-nowrap text-sm">{format(new Date(f.createdAt), 'd MMM yyyy')}<p className="text-xs text-slate-500">{f.uploadedBy ?? ''}</p></Td>
                   <Td className="whitespace-nowrap text-right">
+                    <button className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="Edit details or amount received" onClick={() => onEdit(f)}><Pencil className="h-4 w-4" /></button>
                     <button className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="Download" onClick={() => void download(f)}><Download className="h-4 w-4" /></button>
                     <button className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600" title="Delete" onClick={() => void remove(f)}><Trash2 className="h-4 w-4" /></button>
                   </Td>

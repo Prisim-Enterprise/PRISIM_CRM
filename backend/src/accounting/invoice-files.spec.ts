@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { gunzipSync } from 'node:zlib';
-import { InvoicesService } from './invoices.service';
+import { Prisma } from '@prisma/client';
+import { InvoicesService, shapeInvoiceFile } from './invoices.service';
 import { MAX_INVOICE_FILE_BYTES } from './shared';
 
 const u = { id: 'u1', permissions: new Set(['accounting.manage']) } as never;
@@ -80,9 +81,36 @@ describe('client-wise list of invoice files', () => {
     const svc = new InvoicesService(prisma as never, {} as never, {} as never, {} as never);
     const rows = await svc.listAllInvoiceFiles();
     expect(prisma.acctInvoiceFile.findMany.mock.calls[0][0].orderBy).toEqual({ createdAt: 'desc' });
-    expect(rows).toEqual([
-      { id: 'f2', clientId: 'c2', fileName: 'b.pdf', client: { id: 'c2', name: 'Beta', status: 'ACTIVE' }, uploadedBy: 'Priya Nair' },
+    expect(rows).toMatchObject([
+      { id: 'f2', clientId: 'c2', fileName: 'b.pdf', client: { id: 'c2', name: 'Beta', status: 'ACTIVE' }, uploadedBy: 'Priya Nair', amount: null, status: null },
       { id: 'f1', clientId: 'c1', fileName: 'a.pdf', client: { id: 'c1', name: 'Acme', status: 'ACTIVE' }, uploadedBy: null },
     ]);
+    expect(rows.every((r) => !('uploadedById' in r))).toBe(true);
+  });
+});
+
+describe('uploaded invoice details', () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: 'f1', clientId: 'c1', fileName: 'a.pdf', mimeType: 'application/pdf', sizeBytes: 1, originalBytes: 1, encoding: null, createdAt: new Date(),
+    invoiceNumber: 'INV-9', invoiceDate: new Date('2026-11-01T00:00:00Z'), dueDate: new Date('2026-11-16T00:00:00Z'),
+    amount: new Prisma.Decimal(47200), amountReceived: new Prisma.Decimal(0), ...over,
+  });
+
+  it('works out balance and status like a CRM invoice', () => {
+    expect(shapeInvoiceFile(row(), '2026-11-10')).toMatchObject({ invoiceDate: '2026-11-01', dueDate: '2026-11-16', amount: 47200, amountReceived: 0, balance: 47200, status: 'unpaid' });
+    expect(shapeInvoiceFile(row(), '2026-11-20').status).toBe('overdue');
+    expect(shapeInvoiceFile(row({ amountReceived: new Prisma.Decimal(20000) }), '2026-11-10')).toMatchObject({ balance: 27200, status: 'partial' });
+    expect(shapeInvoiceFile(row({ amountReceived: new Prisma.Decimal(47200) }), '2026-11-20')).toMatchObject({ balance: 0, status: 'paid' });
+  });
+
+  it('a file uploaded without details has no total or status', () => {
+    expect(shapeInvoiceFile(row({ invoiceNumber: null, invoiceDate: null, dueDate: null, amount: null }), '2026-11-10')).toMatchObject({ amount: null, balance: null, status: null });
+  });
+
+  it('refuses more received than the total, or a due date before the invoice date', async () => {
+    const { svc, prisma } = setup();
+    (prisma.acctInvoiceFile as Record<string, unknown>).findUnique = jest.fn().mockResolvedValue(row());
+    await expect(svc.updateInvoiceFileDetails(u, 'f1', { invoiceNumber: 'X', invoiceDate: '2026-11-01', amount: 100, amountReceived: 101 })).rejects.toThrow(/more than the invoice total/);
+    await expect(svc.updateInvoiceFileDetails(u, 'f1', { invoiceNumber: 'X', invoiceDate: '2026-11-10', dueDate: '2026-11-01', amount: 100 })).rejects.toThrow(/before the invoice date/);
   });
 });

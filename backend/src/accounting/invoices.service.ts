@@ -6,17 +6,34 @@ import { AuditService } from '../common/audit.service';
 import { StorageService } from '../common/storage.service';
 import { AuthUser } from '../common/current-user';
 import { compressForStorage, sniffType } from '../common/compress';
-import { InvoiceDto, InvoiceQuery, PaymentDto, UpdateInvoiceDto } from './dto';
+import { InvoiceDto, InvoiceFileDetailsDto, InvoiceQuery, PaymentDto, UpdateInvoiceDto } from './dto';
 import { AccountingSettingsService } from './settings.service';
 import {
   assertClientExists, assertProjectExists, day, INVOICE_FILE_TYPES, invoiceInclude, invoicePrefix, iso, MAX_INVOICE_FILE_BYTES,
-  nextInvoiceSequence, num, shapeInvoice, today,
+  invoiceStatus, nextInvoiceSequence, num, r2, shapeInvoice, today,
 } from './shared';
 
 const isUniqueClash = (e: unknown) => (e as { code?: string }).code === 'P2002';
 const INVOICE_FILE_FIELDS = {
   id: true, clientId: true, fileName: true, mimeType: true, sizeBytes: true, originalBytes: true, encoding: true, createdAt: true,
+  invoiceNumber: true, invoiceDate: true, dueDate: true, amount: true, amountReceived: true,
 } as const;
+type InvoiceFileRow = Prisma.AcctInvoiceFileGetPayload<{ select: typeof INVOICE_FILE_FIELDS }>;
+
+/**
+ * An uploaded invoice with its details and status, worked out like a CRM invoice's
+ * (paid, part paid, unpaid or overdue). Without details, total and status are null.
+ */
+export function shapeInvoiceFile<T extends InvoiceFileRow>(f: T, todayKey = today()) {
+  const total = f.amount == null ? null : num(f.amount);
+  const paid = num(f.amountReceived);
+  const dueDate = iso(f.dueDate);
+  return {
+    ...f, invoiceDate: iso(f.invoiceDate), dueDate, amount: total, amountReceived: paid,
+    balance: total == null ? null : r2(Math.max(0, total - paid)),
+    status: total == null ? null : invoiceStatus(false, total, paid, dueDate, todayKey),
+  };
+}
 
 /** Tax invoices, their payments, and the scanned invoice files kept against a client. */
 @Injectable()
@@ -177,12 +194,12 @@ export class InvoicesService {
     });
     const users = await this.prisma.user.findMany({ where: { id: { in: [...new Set(files.map((f) => f.uploadedById))] } }, select: { id: true, fullName: true } });
     const names = new Map(users.map((x) => [x.id, x.fullName]));
-    return files.map(({ uploadedById, ...f }) => ({ ...f, uploadedBy: names.get(uploadedById) ?? null }));
+    return files.map(({ uploadedById, ...f }) => ({ ...shapeInvoiceFile(f), uploadedBy: names.get(uploadedById) ?? null }));
   }
 
   async listClientInvoiceFiles(clientId: string) {
     await this.assertClient(clientId);
-    return this.prisma.acctInvoiceFile.findMany({ where: { clientId }, orderBy: { createdAt: 'desc' }, select: INVOICE_FILE_FIELDS });
+    return (await this.prisma.acctInvoiceFile.findMany({ where: { clientId }, orderBy: { createdAt: 'desc' }, select: INVOICE_FILE_FIELDS })).map((f) => shapeInvoiceFile(f));
   }
 
   /**
@@ -211,7 +228,27 @@ export class InvoicesService {
       actorId: u.id, action: 'accounting.invoice_file_uploaded', entityType: 'acct_invoice_file', entityId: saved.id,
       after: { clientId, fileName: saved.fileName, originalBytes: saved.originalBytes, sizeBytes: saved.sizeBytes, encoding: saved.encoding },
     });
-    return saved;
+    return shapeInvoiceFile(saved);
+  }
+
+  /** Saves an uploaded invoice's number, dates, amount and amount received. */
+  async updateInvoiceFileDetails(u: AuthUser, id: string, dto: InvoiceFileDetailsDto) {
+    const before = await this.prisma.acctInvoiceFile.findUnique({ where: { id }, select: INVOICE_FILE_FIELDS });
+    if (!before) throw new NotFoundException('Invoice file not found');
+    const received = r2(dto.amountReceived ?? 0);
+    if (received > dto.amount) throw new BadRequestException('The amount received is more than the invoice total');
+    if (dto.dueDate && dto.dueDate.slice(0, 10) < dto.invoiceDate.slice(0, 10)) throw new BadRequestException('The due date is before the invoice date');
+    const saved = await this.prisma.acctInvoiceFile.update({
+      where: { id },
+      data: { invoiceNumber: dto.invoiceNumber.trim(), invoiceDate: day(dto.invoiceDate), dueDate: dto.dueDate ? day(dto.dueDate) : null, amount: r2(dto.amount), amountReceived: received },
+      select: INVOICE_FILE_FIELDS,
+    });
+    await this.audit.record({
+      actorId: u.id, action: 'accounting.invoice_file_details', entityType: 'acct_invoice_file', entityId: id,
+      before: { invoiceNumber: before.invoiceNumber, amount: before.amount == null ? null : num(before.amount), amountReceived: num(before.amountReceived) },
+      after: { invoiceNumber: saved.invoiceNumber, amount: num(saved.amount), amountReceived: num(saved.amountReceived) },
+    });
+    return shapeInvoiceFile(saved);
   }
 
   async clientInvoiceFile(id: string, res: Response) {

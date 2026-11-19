@@ -223,6 +223,15 @@ export class UpdateInvoiceDto {
   @IsOptional() @ValidateNested() @Type(() => InvoiceExtraDto) extra?: InvoiceExtraDto;
   @IsOptional() @ValidateIf((_, v) => v !== null) @ValidateNested() @Type(() => ShipToDto) shipTo?: ShipToDto | null;
 }
+/** The details of an uploaded invoice, so it lists and totals with the CRM's own invoices. */
+export class InvoiceFileDetailsDto {
+  @IsString() @MinLength(1) @MaxLength(60) invoiceNumber: string;
+  @IsDateString() invoiceDate: string;
+  @IsOptional() @ValidateIf((_, v) => v !== null) @IsDateString() dueDate?: string | null;
+  @IsNumber({ maxDecimalPlaces: 2 }) @Min(0.01) @Max(9_999_999_999) amount: number;
+  @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(9_999_999_999) amountReceived?: number;
+}
+
 export class InvoiceQuery {
   @IsOptional() @IsString() @MaxLength(100) search?: string;
   @IsOptional() @IsIn(['paid', 'partial', 'unpaid', 'overdue', 'cancelled']) status?: string;
