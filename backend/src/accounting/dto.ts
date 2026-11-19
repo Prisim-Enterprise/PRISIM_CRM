@@ -230,6 +230,8 @@ export class InvoiceFileDetailsDto {
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsDateString() dueDate?: string | null;
   @IsNumber({ maxDecimalPlaces: 2 }) @Min(0.01) @Max(9_999_999_999) amount: number;
   @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(9_999_999_999) amountReceived?: number;
+  /** How it was paid. Needed when anything has been received. */
+  @IsOptional() @ValidateIf((_, v) => v !== null) @IsEnum(AcctPaymentMethod) paymentMethod?: AcctPaymentMethod | null;
 }
 
 export class InvoiceQuery {

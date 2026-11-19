@@ -16,7 +16,7 @@ import {
 const isUniqueClash = (e: unknown) => (e as { code?: string }).code === 'P2002';
 const INVOICE_FILE_FIELDS = {
   id: true, clientId: true, fileName: true, mimeType: true, sizeBytes: true, originalBytes: true, encoding: true, createdAt: true,
-  invoiceNumber: true, invoiceDate: true, dueDate: true, amount: true, amountReceived: true,
+  invoiceNumber: true, invoiceDate: true, dueDate: true, amount: true, amountReceived: true, paymentMethod: true,
 } as const;
 type InvoiceFileRow = Prisma.AcctInvoiceFileGetPayload<{ select: typeof INVOICE_FILE_FIELDS }>;
 
@@ -238,15 +238,16 @@ export class InvoicesService {
     const received = r2(dto.amountReceived ?? 0);
     if (received > dto.amount) throw new BadRequestException('The amount received is more than the invoice total');
     if (dto.dueDate && dto.dueDate.slice(0, 10) < dto.invoiceDate.slice(0, 10)) throw new BadRequestException('The due date is before the invoice date');
+    if (received > 0 && !dto.paymentMethod) throw new BadRequestException('Choose the mode of payment');
     const saved = await this.prisma.acctInvoiceFile.update({
       where: { id },
-      data: { invoiceNumber: dto.invoiceNumber.trim(), invoiceDate: day(dto.invoiceDate), dueDate: dto.dueDate ? day(dto.dueDate) : null, amount: r2(dto.amount), amountReceived: received },
+      data: { invoiceNumber: dto.invoiceNumber.trim(), invoiceDate: day(dto.invoiceDate), dueDate: dto.dueDate ? day(dto.dueDate) : null, amount: r2(dto.amount), amountReceived: received, paymentMethod: received > 0 ? dto.paymentMethod : null },
       select: INVOICE_FILE_FIELDS,
     });
     await this.audit.record({
       actorId: u.id, action: 'accounting.invoice_file_details', entityType: 'acct_invoice_file', entityId: id,
       before: { invoiceNumber: before.invoiceNumber, amount: before.amount == null ? null : num(before.amount), amountReceived: num(before.amountReceived) },
-      after: { invoiceNumber: saved.invoiceNumber, amount: num(saved.amount), amountReceived: num(saved.amountReceived) },
+      after: { invoiceNumber: saved.invoiceNumber, amount: num(saved.amount), amountReceived: num(saved.amountReceived), paymentMethod: saved.paymentMethod },
     });
     return shapeInvoiceFile(saved);
   }

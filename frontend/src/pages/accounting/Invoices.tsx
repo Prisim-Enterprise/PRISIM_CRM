@@ -7,10 +7,12 @@ import { ArrowLeft, Ban, Download, FileText, Pencil, Plus, Printer, RotateCcw, S
 import { toast } from 'sonner';
 import { api, errMsg } from '../../lib/api';
 import { compressInvoiceUpload } from '../../lib/compressUpload';
+import { findClient, parseInvoice } from '../../lib/invoiceText';
+import { pdfText } from '../../lib/readInvoice';
 import { useAuth } from '../../lib/auth';
 import { Badge, Button, Card, Empty, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, StatCard, Table, Tabs, Td, Textarea, Th } from '../../components/ui';
 import {
-  AccountingGate, ClientDetails, dayLabel, GST_STATES, Invoice, InvoiceExtra, INVOICE_STATUS, InvoiceItem, InvoiceStatus, METHODS, rupees, Settings, ShipTo,
+  AccountingGate, ClientDetails, dayLabel, GST_STATES, Invoice, InvoiceExtra, INVOICE_STATUS, InvoiceItem, InvoiceStatus, METHODS, PaymentMethod, rupees, Settings, ShipTo,
   stateOf, todayIso, useLookups, useSettings,
 } from './shared';
 import { PaymentModal } from './Projects';
@@ -26,19 +28,42 @@ interface InvoiceFile {
   id: string; clientId: string; fileName: string; mimeType: string; sizeBytes: number; originalBytes: number; encoding: string | null; createdAt: string;
   /** The invoice's own details, entered on upload. Null until they are added (files uploaded before this). */
   invoiceNumber: string | null; invoiceDate: string | null; dueDate: string | null; amount: number | null; amountReceived: number;
-  balance: number | null; status: Exclude<InvoiceStatus, 'cancelled'> | null;
+  paymentMethod: PaymentMethod | null; balance: number | null; status: Exclude<InvoiceStatus, 'cancelled'> | null;
 }
-interface FileDetails { invoiceNumber: string; invoiceDate: string; dueDate: string; amount: string; amountReceived: string }
+/** How much of an uploaded invoice has been paid, as chosen in the form. */
+type PayState = 'unpaid' | 'partial' | 'paid';
+const PAY_STATES: [PayState, string][] = [['unpaid', 'Yet to be paid'], ['partial', 'Partial payment'], ['paid', 'Fully paid']];
+interface FileDetails {
+  invoiceNumber: string; invoiceDate: string; dueDate: string; amount: string;
+  payState: PayState; amountPaid: string; paymentMethod: PaymentMethod | '';
+}
+const blankFileDetails = (invoiceDate: string, dueDate = ''): FileDetails => ({ invoiceNumber: '', invoiceDate, dueDate, amount: '', payState: 'unpaid', amountPaid: '', paymentMethod: '' });
 
 /** Checks an uploaded invoice's details; returns the request body, or shows what is wrong and returns null. */
 function detailsBody(d: FileDetails) {
-  const amount = r2(Number(d.amount) || 0), received = r2(Number(d.amountReceived) || 0);
+  const amount = r2(Number(d.amount) || 0);
+  const received = d.payState === 'paid' ? amount : d.payState === 'partial' ? r2(Number(d.amountPaid) || 0) : 0;
   if (!d.invoiceNumber.trim()) { toast.error('Add the invoice number'); return null; }
   if (!d.invoiceDate) { toast.error('Add the invoice date'); return null; }
   if (!(amount > 0)) { toast.error('Add the invoice total'); return null; }
-  if (received > amount) { toast.error('The amount received is more than the total'); return null; }
   if (d.dueDate && d.dueDate < d.invoiceDate) { toast.error('The due date is before the invoice date'); return null; }
-  return { invoiceNumber: d.invoiceNumber.trim(), invoiceDate: d.invoiceDate, dueDate: d.dueDate || null, amount, amountReceived: received };
+  if (d.payState === 'partial' && !(received > 0)) { toast.error('Enter the amount paid'); return null; }
+  if (d.payState === 'partial' && received >= amount) { toast.error('The amount paid is the full total: choose “Fully paid”'); return null; }
+  if (d.payState !== 'unpaid' && !d.paymentMethod) { toast.error('Choose the mode of payment'); return null; }
+  return {
+    invoiceNumber: d.invoiceNumber.trim(), invoiceDate: d.invoiceDate, dueDate: d.dueDate || null, amount, amountReceived: received,
+    paymentMethod: d.payState === 'unpaid' ? null : d.paymentMethod,
+  };
+}
+
+/** The form's values for an uploaded invoice that already has details. */
+function detailsOf(f: InvoiceFile): FileDetails {
+  const total = f.amount ?? 0;
+  const payState: PayState = f.amountReceived <= 0 ? 'unpaid' : f.amountReceived >= total && total > 0 ? 'paid' : 'partial';
+  return {
+    invoiceNumber: f.invoiceNumber ?? '', invoiceDate: f.invoiceDate ?? f.createdAt.slice(0, 10), dueDate: f.dueDate ?? '',
+    amount: f.amount == null ? '' : String(f.amount), payState, amountPaid: payState === 'partial' ? String(f.amountReceived) : '', paymentMethod: f.paymentMethod ?? '',
+  };
 }
 
 const openInvoiceFile = async (f: Pick<InvoiceFile, 'id'>) => {
@@ -48,13 +73,42 @@ const openInvoiceFile = async (f: Pick<InvoiceFile, 'id'>) => {
 
 /** Number, dates, total and amount received for an uploaded invoice. */
 function DetailsFields({ d, onChange }: { d: FileDetails; onChange: (d: FileDetails) => void }) {
+  const total = Number(d.amount) || 0;
+  const balance = d.payState === 'partial' ? Math.max(0, total - (Number(d.amountPaid) || 0)) : null;
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      <Field label="Invoice number"><Input value={d.invoiceNumber} onChange={(e) => onChange({ ...d, invoiceNumber: e.target.value })} placeholder="2026-27/14" /></Field>
-      <Field label="Invoice total (₹)" hint="Including GST"><Input type="number" min={0} step="0.01" value={d.amount} onChange={(e) => onChange({ ...d, amount: e.target.value })} /></Field>
-      <Field label="Invoice date"><Input type="date" value={d.invoiceDate} onChange={(e) => onChange({ ...d, invoiceDate: e.target.value })} /></Field>
-      <Field label="Due date (optional)"><Input type="date" value={d.dueDate} onChange={(e) => onChange({ ...d, dueDate: e.target.value })} /></Field>
-      <Field label="Amount received so far (₹)" hint="Update it as payments come in"><Input type="number" min={0} step="0.01" value={d.amountReceived} onChange={(e) => onChange({ ...d, amountReceived: e.target.value })} placeholder="0" /></Field>
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Invoice number"><Input value={d.invoiceNumber} onChange={(e) => onChange({ ...d, invoiceNumber: e.target.value })} placeholder="2026-27/14" /></Field>
+        <Field label="Invoice total (₹)" hint="Including GST"><Input type="number" min={0} step="0.01" value={d.amount} onChange={(e) => onChange({ ...d, amount: e.target.value })} /></Field>
+        <Field label="Invoice date"><Input type="date" value={d.invoiceDate} onChange={(e) => onChange({ ...d, invoiceDate: e.target.value })} /></Field>
+        <Field label="Due date (optional)"><Input type="date" value={d.dueDate} onChange={(e) => onChange({ ...d, dueDate: e.target.value })} /></Field>
+      </div>
+      <div>
+        <p className="mb-1 text-sm font-medium text-slate-700">Payment status</p>
+        <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Payment status">
+          {PAY_STATES.map(([k, label]) => (
+            <button key={k} type="button" role="radio" aria-checked={d.payState === k} onClick={() => onChange({ ...d, payState: k })}
+              className={clsx('rounded-xl border px-3 py-2 text-sm font-medium transition', d.payState === k ? 'border-indigo-500 bg-indigo-50 text-indigo-800' : 'border-slate-300 text-slate-600 hover:bg-slate-50')}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {d.payState !== 'unpaid' && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {d.payState === 'partial' && (
+            <Field label="Amount paid (₹)" hint={balance != null && total > 0 ? `Balance: ${rupees(balance)}` : undefined}>
+              <Input type="number" min={0} step="0.01" value={d.amountPaid} onChange={(e) => onChange({ ...d, amountPaid: e.target.value })} />
+            </Field>
+          )}
+          <Field label="Mode of payment">
+            <Select value={d.paymentMethod} onChange={(e) => onChange({ ...d, paymentMethod: e.target.value as PaymentMethod | '' })}>
+              <option value="">Choose…</option>
+              {(Object.keys(METHODS) as PaymentMethod[]).map((m) => <option key={m} value={m}>{METHODS[m]}</option>)}
+            </Select>
+          </Field>
+        </div>
+      )}
     </div>
   );
 }
@@ -62,10 +116,7 @@ function DetailsFields({ d, onChange }: { d: FileDetails; onChange: (d: FileDeta
 /** Adds or changes the details of an uploaded invoice. */
 function FileDetailsModal({ f, clientName, onClose }: { f: InvoiceFile; clientName?: string; onClose: () => void }) {
   const qc = useQueryClient();
-  const [d, setD] = useState<FileDetails>({
-    invoiceNumber: f.invoiceNumber ?? '', invoiceDate: f.invoiceDate ?? f.createdAt.slice(0, 10), dueDate: f.dueDate ?? '',
-    amount: f.amount == null ? '' : String(f.amount), amountReceived: f.amountReceived ? String(f.amountReceived) : '',
-  });
+  const [d, setD] = useState<FileDetails>(detailsOf(f));
   const [busy, setBusy] = useState(false);
   const save = async () => {
     const body = detailsBody(d);
@@ -148,8 +199,10 @@ function InvoicesPage() {
   const [compressing, setCompressing] = useState(false);
   const [prepNote, setPrepNote] = useState('');
   const [uploading, setUploading] = useState(false);
-  const blankDetails = (): FileDetails => ({ invoiceNumber: '', invoiceDate: todayIso(), dueDate: settings.data ? addDays(todayIso(), settings.data.invoiceDueDays) : '', amount: '', amountReceived: '' });
-  const [details, setDetails] = useState<FileDetails>({ invoiceNumber: '', invoiceDate: todayIso(), dueDate: '', amount: '', amountReceived: '' });
+  const blankDetails = (): FileDetails => blankFileDetails(todayIso(), settings.data ? addDays(todayIso(), settings.data.invoiceDueDays) : '');
+  const [details, setDetails] = useState<FileDetails>(blankFileDetails(todayIso()));
+  /** What reading the PDF found, shown under the file. */
+  const [readNote, setReadNote] = useState('');
   const [editingFile, setEditingFile] = useState<ListedInvoiceFile | null>(null);
   const qc = useQueryClient();
   const clients = useQuery({ queryKey: ['client-directory'], queryFn: () => api.get<{ id: string; name: string }[]>('/clients/directory'), staleTime: 60_000 });
@@ -169,12 +222,34 @@ function InvoicesPage() {
     .map((f) => ({ kind: 'file', date: f.invoiceDate ?? f.createdAt.slice(0, 10), f }));
   // Newest first, the CRM's and uploaded invoices together.
   const list: Row[] = [...(q.data ?? []).map((inv): Row => ({ kind: 'crm', date: inv.date, inv })), ...fileRows].sort((a, b) => b.date.localeCompare(a.date));
-  const resetUpload = () => { setUploadOpen(false); setClientId(''); setFile(null); setPrepNote(''); setDetails(blankDetails()); };
+  const resetUpload = () => { setUploadOpen(false); setClientId(''); setFile(null); setPrepNote(''); setReadNote(''); setDetails(blankDetails()); };
   const closeUpload = () => { if (!uploading) resetUpload(); };
-  const openUpload = (forClient = '') => { setClientId(forClient); setFile(null); setPrepNote(''); setDetails(blankDetails()); setUploadOpen(true); };
+  const openUpload = (forClient = '') => { setClientId(forClient); setFile(null); setPrepNote(''); setReadNote(''); setDetails(blankDetails()); setUploadOpen(true); };
+  /** Fills the invoice number, dates, total and client from the PDF's text, where it can read them. */
+  const readDetails = async (selected: File) => {
+    try {
+      const pieces = await pdfText(selected);
+      if (!pieces.length) {
+        setReadNote(/\.pdf$/i.test(selected.name) || selected.type === 'application/pdf' ? 'This PDF has no readable text (it may be a scan), so type the details in.' : 'Details can only be read from PDFs; type them in.');
+        return;
+      }
+      const found = parseInvoice(pieces);
+      const client = clientId ? undefined : findClient(pieces, clients.data ?? []);
+      if (client) setClientId(client.id);
+      setDetails((d) => ({
+        ...d,
+        invoiceNumber: found.invoiceNumber ?? d.invoiceNumber, invoiceDate: found.invoiceDate ?? d.invoiceDate,
+        dueDate: found.dueDate ?? (found.invoiceDate && settings.data ? addDays(found.invoiceDate, settings.data.invoiceDueDays) : d.dueDate),
+        amount: found.amount != null ? String(found.amount) : d.amount,
+      }));
+      const got = [found.invoiceNumber && 'number', found.invoiceDate && 'date', found.dueDate && 'due date', found.amount != null && 'total', client && 'client'].filter(Boolean);
+      setReadNote(got.length ? `Filled in from the invoice: ${got.join(', ')}. Check them before uploading.` : 'Could not find the details in this PDF, so type them in.');
+    } catch { setReadNote('Could not read this PDF, so type the details in.'); }
+  };
   const chooseFile = async (selected: File | undefined) => {
-    setFile(null); setPrepNote('');
+    setFile(null); setPrepNote(''); setReadNote('');
     if (!selected) return;
+    void readDetails(selected);
     setCompressing(true);
     try {
       // Any size can be picked; it is shrunk here to 1 MB or less before upload.
@@ -268,7 +343,7 @@ function InvoicesPage() {
                   <Td className="whitespace-nowrap">{dayLabel(f.invoiceDate)}</Td>
                   <Td className="whitespace-nowrap">{dayLabel(f.dueDate)}</Td>
                   <Td className="text-right tabular-nums">{f.amount == null ? '—' : rupees(f.amount)}</Td>
-                  <Td className="text-right tabular-nums">{f.amount == null ? '—' : rupees(f.amountReceived)}</Td>
+                  <Td className="text-right tabular-nums">{f.amount == null ? '—' : rupees(f.amountReceived)}{f.paymentMethod && f.amountReceived > 0 && <p className="text-xs text-slate-500">{METHODS[f.paymentMethod]}</p>}</Td>
                   <Td className="text-right font-medium tabular-nums">{f.balance == null ? '—' : rupees(f.balance)}</Td>
                   <Td>{f.status ? <Badge className={INVOICE_STATUS[f.status].color}>{INVOICE_STATUS[f.status].label}</Badge> : <Badge className="bg-amber-50 text-amber-700">Details missing</Badge>}</Td>
                 </tr>
@@ -278,21 +353,22 @@ function InvoicesPage() {
         )}
       </Card>
       </>}
-      <Modal open={uploadOpen} onClose={closeUpload} wide title="Upload client invoice" footer={<>
+      <Modal open={uploadOpen} onClose={closeUpload} wide title="Upload invoice" footer={<>
         <Button variant="secondary" onClick={closeUpload} disabled={uploading}>Cancel</Button>
         <Button onClick={uploadFile} loading={uploading} disabled={!clientId || !file || compressing || !details.invoiceNumber.trim() || !(Number(details.amount) > 0)}>Upload invoice</Button>
       </>}>
         <Field label="Client">
-          <Select value={clientId} onChange={(e) => { setClientId(e.target.value); setFile(null); }}>
-            <option value="">Select a client first</option>
+          <Select value={clientId} onChange={(e) => setClientId(e.target.value)}>
+            <option value="">Select the client</option>
             {(clients.data ?? []).map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
           </Select>
         </Field>
-        <Field label="Invoice file" hint="PDF, PNG, JPG or WebP of any size. It is compressed to 1 MB or less before upload.">
-          <Input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" disabled={!clientId || compressing || uploading} onChange={(e) => { void chooseFile(e.target.files?.[0]); e.target.value = ''; }} />
+        <Field label="Invoice file" hint="PDF, PNG, JPG or WebP of any size. It is compressed to 1 MB or less before upload. From a PDF, the number, dates, total and client are filled in for you.">
+          <Input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" disabled={compressing || uploading} onChange={(e) => { void chooseFile(e.target.files?.[0]); e.target.value = ''; }} />
         </Field>
         {compressing && <p className="text-sm text-slate-500">Compressing to 1 MB or less… large PDFs can take a few seconds.</p>}
         {file && <p className="text-sm text-slate-600">Ready: {file.name} · {fileSize(file.size)}{prepNote && ` · ${prepNote}`}</p>}
+        {readNote && <p className="rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-800">{readNote}</p>}
         <DetailsFields d={details} onChange={setDetails} />
       </Modal>
       {editingFile && <FileDetailsModal f={editingFile} clientName={editingFile.client.name} onClose={() => setEditingFile(null)} />}

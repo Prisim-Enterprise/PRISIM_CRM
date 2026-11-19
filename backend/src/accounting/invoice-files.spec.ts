@@ -93,7 +93,7 @@ describe('uploaded invoice details', () => {
   const row = (over: Record<string, unknown> = {}) => ({
     id: 'f1', clientId: 'c1', fileName: 'a.pdf', mimeType: 'application/pdf', sizeBytes: 1, originalBytes: 1, encoding: null, createdAt: new Date(),
     invoiceNumber: 'INV-9', invoiceDate: new Date('2026-11-01T00:00:00Z'), dueDate: new Date('2026-11-16T00:00:00Z'),
-    amount: new Prisma.Decimal(47200), amountReceived: new Prisma.Decimal(0), ...over,
+    amount: new Prisma.Decimal(47200), amountReceived: new Prisma.Decimal(0), paymentMethod: null, ...over,
   });
 
   it('works out balance and status like a CRM invoice', () => {
@@ -112,5 +112,6 @@ describe('uploaded invoice details', () => {
     (prisma.acctInvoiceFile as Record<string, unknown>).findUnique = jest.fn().mockResolvedValue(row());
     await expect(svc.updateInvoiceFileDetails(u, 'f1', { invoiceNumber: 'X', invoiceDate: '2026-11-01', amount: 100, amountReceived: 101 })).rejects.toThrow(/more than the invoice total/);
     await expect(svc.updateInvoiceFileDetails(u, 'f1', { invoiceNumber: 'X', invoiceDate: '2026-11-10', dueDate: '2026-11-01', amount: 100 })).rejects.toThrow(/before the invoice date/);
+    await expect(svc.updateInvoiceFileDetails(u, 'f1', { invoiceNumber: 'X', invoiceDate: '2026-11-01', amount: 100, amountReceived: 40 })).rejects.toThrow(/mode of payment/);
   });
 });

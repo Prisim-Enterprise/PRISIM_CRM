@@ -1246,10 +1246,10 @@ model AcctInvoice {
 }
 
 model AcctInvoiceFile {
-  id             String    @id @default(uuid()) @db.Uuid
-  clientId       String    @db.Uuid
-  client         Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  storageKey     String    @unique
+  id             String             @id @default(uuid()) @db.Uuid
+  clientId       String             @db.Uuid
+  client         Client             @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  storageKey     String             @unique
   fileName       String
   mimeType       String
   /// Bytes as stored (after compression).
@@ -1258,14 +1258,16 @@ model AcctInvoiceFile {
   originalBytes  Int
   /// "gzip" when stored gzipped; null when stored as uploaded.
   encoding       String?
-  uploadedById   String    @db.Uuid
-  createdAt      DateTime  @default(now())
+  uploadedById   String             @db.Uuid
+  createdAt      DateTime           @default(now())
   /// The invoice's own details, entered on upload, so it lists and totals with the CRM's invoices.
   invoiceNumber  String?
-  invoiceDate    DateTime? @db.Date
-  dueDate        DateTime? @db.Date
-  amount         Decimal?  @db.Decimal(14, 2)
-  amountReceived Decimal   @default(0) @db.Decimal(14, 2)
+  invoiceDate    DateTime?          @db.Date
+  dueDate        DateTime?          @db.Date
+  amount         Decimal?           @db.Decimal(14, 2)
+  amountReceived Decimal            @default(0) @db.Decimal(14, 2)
+  /// How the amount received was paid.
+  paymentMethod  AcctPaymentMethod?
 
   @@index([clientId, createdAt])
   @@map("acct_invoice_files")
