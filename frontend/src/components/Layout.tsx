@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
-  LayoutDashboard, Users, CalendarClock, PhoneCall, KanbanSquare, MessageSquareText, Shield, Plug, ScrollText,
+  LayoutDashboard, Users, CalendarClock, KanbanSquare, MessageSquareText, Shield, Plug, ScrollText,
   Bell, BellRing, LogOut, Menu, UserCog, Volume2, VolumeX, X, Archive,
   Building2, Clapperboard, TrendingUp, MessagesSquare, BarChart3, Calculator, ChevronDown, FileText,
 } from 'lucide-react';
@@ -170,7 +170,6 @@ export default function Layout() {
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
     { to: '/leads', label: 'Leads', icon: Users },
     { to: '/follow-ups', label: 'Follow-ups', icon: CalendarClock },
-    { to: '/calls', label: 'Calls', icon: PhoneCall },
     { to: '/tasks', label: 'Tasks', icon: KanbanSquare },
     { to: '/clients', label: 'Clients', icon: Building2 },
     { to: '/media', label: 'Media', icon: Clapperboard },

@@ -9,8 +9,8 @@ import { api, Paged } from '../lib/api';
 import type { LeadRow } from './Leads';
 import { useAuth } from '../lib/auth';
 import { sharesTeam, useDirectory, useTeams } from '../lib/hooks';
-import { CALL_OUTCOMES, LEAD_STATUS, ago, fmtDateTime, fmtDuration, fmtPhone, pct } from '../lib/format';
-import { Briefcase, CalendarClock, Globe, KanbanSquare, MessageSquareText, PhoneCall, StickyNote, Users } from 'lucide-react';
+import { LEAD_STATUS, ago, fmtDateTime, fmtPhone, pct } from '../lib/format';
+import { Briefcase, CalendarClock, Globe, KanbanSquare, MessageSquareText, StickyNote, Users } from 'lucide-react';
 import { Avatar, Badge, Card, ErrorBox, Input, PageHeader, Select, Spinner, StatCard, Table, Td, Th } from '../components/ui';
 
 interface Dash {
@@ -18,16 +18,15 @@ interface Dash {
   scope: 'all' | 'team' | 'own';
   metrics: Record<string, number | null>;
   charts: {
-    daily: { date: string; leads: number; calls: number; connected: number }[];
+    daily: { date: string; leads: number }[];
     leadsByStatus: { status: string; count: number }[];
     campaigns: { campaign: string; leads: number; converted: number }[];
-    callOutcomes: { outcome: string; count: number }[];
     leadsBySource: { key: string; name: string; leads: number; today: number; converted: number }[];
   };
 }
 interface EmpRow {
-  userId: string; name: string; team: string | null; leadsAssigned: number; openLeads: number; callsMade: number; connectedCalls: number;
-  talkTimeSeconds: number; followUpsCompleted: number; missedFollowUps: number; converted: number; conversionPerAssigned: number | null;
+  userId: string; name: string; team: string | null; leadsAssigned: number; openLeads: number;
+  followUpsCompleted: number; missedFollowUps: number; converted: number; conversionPerAssigned: number | null;
   tasksCompleted: number; overdueTasks: number;
 }
 
@@ -35,10 +34,10 @@ interface ActivityItem { id: string; at: string; kind: string; actor: { id: stri
 interface ClientSummary { activeClients: number | null; openWork: number; submitted: number; overdue: number; myOpen: number }
 
 const KIND_ICON: Record<string, typeof Users> = {
-  lead: Users, note: StickyNote, call: PhoneCall, followup: CalendarClock, task: KanbanSquare, feedback: MessageSquareText, client: Briefcase,
+  lead: Users, note: StickyNote, followup: CalendarClock, task: KanbanSquare, feedback: MessageSquareText, client: Briefcase,
 };
 const KIND_LABEL: Record<string, string> = {
-  '': 'Everything', lead: 'Leads', note: 'Notes', call: 'Calls', followup: 'Follow-ups', task: 'Tasks', feedback: 'Feedback', client: 'Clients',
+  '': 'Everything', lead: 'Leads', note: 'Notes', followup: 'Follow-ups', task: 'Tasks', feedback: 'Feedback', client: 'Clients',
 };
 
 function ActivityFeed({ userId, teamId, title }: { userId: string; teamId: string; title: string }) {
@@ -82,7 +81,6 @@ const STATUS_COLORS: Record<string, string> = {
   NEW: '#0ea5e9', UNASSIGNED: '#f59e0b', ASSIGNED: '#262626', CONTACT_ATTEMPTED: '#fb923c', CONTACTED: '#06b6d4', INTERESTED: '#10b981',
   FOLLOW_UP_REQUIRED: '#8b5cf6', CONVERTED: '#16a34a', LOST: '#94a3b8', INVALID: '#f43f5e', DUPLICATE: '#a8a29e',
 };
-const OUTCOME_COLORS = ['#10b981', '#ff7a00', '#8b5cf6', '#f59e0b', '#16a34a', '#94a3b8', '#fb923c', '#f43f5e', '#64748b', '#cbd5e1'];
 
 export default function Dashboard() {
   const { me, can } = useAuth();
@@ -156,7 +154,6 @@ export default function Dashboard() {
             <StatCard label="Active assigned" value={m.assigned} sub="open leads with owner" />
             <StatCard label="Converted" value={m.converted} tone="good" sub={`${pct(m.conversionRate ?? 0)} of period's leads`} />
             <StatCard label="Lost" value={m.lost} sub="closed without conversion" />
-            <StatCard label="Calls made" value={m.callsMade} sub={`${m.connectedCalls} connected · ${fmtDuration(m.talkTimeSeconds)} talk`} onClick={() => nav('/calls')} />
             <StatCard label="Follow-ups today" value={m.followUpsToday} onClick={() => nav('/follow-ups?view=today')} />
             <StatCard label="Overdue follow-ups" value={m.overdueFollowUps} tone={m.overdueFollowUps ? 'bad' : 'default'} onClick={() => nav('/follow-ups?view=overdue')} />
             <StatCard label="Follow-ups done" value={m.followUpsCompleted} sub="in period" />
@@ -222,7 +219,7 @@ export default function Dashboard() {
           <ActivityFeed userId={userId} teamId={teamId} title={data.scope === 'all' ? 'Recent activity across the team' : data.scope === 'team' ? "Your team's recent activity" : 'Your recent activity'} />
 
           <div className="grid gap-5 xl:grid-cols-3">
-            <Card title="Leads & calls per day" className="xl:col-span-2">
+            <Card title="New leads per day" className="xl:col-span-2">
               <div className="h-72 p-3">
                 <ResponsiveContainer>
                   <AreaChart data={data.charts.daily}>
@@ -235,8 +232,6 @@ export default function Dashboard() {
                     <Tooltip labelFormatter={(d) => format(new Date(String(d)), 'd MMM yyyy')} />
                     <Legend />
                     <Area type="monotone" dataKey="leads" name="New leads" stroke="#ff7a00" fill="url(#gl)" strokeWidth={2} />
-                    <Area type="monotone" dataKey="calls" name="Calls" stroke="#0ea5e9" fill="transparent" strokeWidth={2} />
-                    <Area type="monotone" dataKey="connected" name="Connected" stroke="#10b981" fill="transparent" strokeWidth={2} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -256,7 +251,7 @@ export default function Dashboard() {
             </Card>
           </div>
 
-          <div className="grid gap-5 xl:grid-cols-2">
+          <div className="grid gap-5">
             <Card title="Campaign performance">
               <div className="h-72 p-3">
                 <ResponsiveContainer>
@@ -272,21 +267,6 @@ export default function Dashboard() {
                 </ResponsiveContainer>
               </div>
             </Card>
-            <Card title="Call outcomes">
-              <div className="h-72 p-3">
-                <ResponsiveContainer>
-                  <BarChart data={data.charts.callOutcomes.map((o) => ({ ...o, label: CALL_OUTCOMES[o.outcome] ?? 'Not recorded' }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#eaeaea" />
-                    <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={50} />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={30} />
-                    <Tooltip />
-                    <Bar dataKey="count" name="Calls" radius={[4, 4, 0, 0]}>
-                      {data.charts.callOutcomes.map((_, i) => <Cell key={i} fill={OUTCOME_COLORS[i % OUTCOME_COLORS.length]} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </Card>
           </div>
 
           {isManager && (
@@ -294,8 +274,8 @@ export default function Dashboard() {
               <Table>
                 <thead>
                   <tr>
-                    <Th>Employee</Th><Th className="text-right">Assigned</Th><Th className="text-right">Open leads</Th><Th className="text-right">Calls</Th>
-                    <Th className="text-right">Connected</Th><Th className="text-right">Talk time</Th><Th className="text-right">Follow-ups done</Th>
+                    <Th>Employee</Th><Th className="text-right">Assigned</Th><Th className="text-right">Open leads</Th>
+                    <Th className="text-right">Follow-ups done</Th>
                     <Th className="text-right">Missed</Th><Th className="text-right">Converted</Th><Th className="text-right">Tasks done</Th><Th className="text-right">Overdue tasks</Th>
                   </tr>
                 </thead>
@@ -305,9 +285,6 @@ export default function Dashboard() {
                       <Td><p className="font-medium">{e.name}</p><p className="text-xs text-slate-500">{e.team ?? 'No team'}</p></Td>
                       <Td className="text-right tabular-nums">{e.leadsAssigned}</Td>
                       <Td className="text-right tabular-nums">{e.openLeads}</Td>
-                      <Td className="text-right tabular-nums">{e.callsMade}</Td>
-                      <Td className="text-right tabular-nums">{e.connectedCalls}{e.callsMade ? <span className="ml-1 text-xs text-slate-400">({Math.round((e.connectedCalls / e.callsMade) * 100)}%)</span> : null}</Td>
-                      <Td className="text-right tabular-nums">{fmtDuration(e.talkTimeSeconds)}</Td>
                       <Td className="text-right tabular-nums">{e.followUpsCompleted}</Td>
                       <Td className={`text-right tabular-nums ${e.missedFollowUps ? 'font-semibold text-rose-600' : ''}`}>{e.missedFollowUps}</Td>
                       <Td className="text-right tabular-nums">{e.converted}</Td>

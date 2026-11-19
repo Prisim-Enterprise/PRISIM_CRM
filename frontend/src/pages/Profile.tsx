@@ -33,7 +33,7 @@ export default function Profile() {
             <dt className="text-slate-500">{(me?.teams?.length ?? 0) > 1 ? 'Teams' : 'Team'}</dt><dd className="col-span-2">{me?.teams?.length ? me.teams.map((t) => t.name).join(', ') : '—'}</dd>
             <dt className="text-slate-500">Roles</dt><dd className="col-span-2 flex gap-1">{me?.roles.map((r) => <Badge key={r} className="bg-indigo-50 text-indigo-700">{r.replace('_', ' ')}</Badge>)}</dd>
           </dl>
-          <Field label="My phone number" hint="Click-to-call rings this number first, then connects you to the customer.">
+          <Field label="My phone number">
             <div className="flex gap-2">
               <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" />
               <Button loading={savePhone.isPending} onClick={() => savePhone.mutate()}>Save</Button>

@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import clsx from 'clsx';
-import { Download, Plus, Search, Trash2, Upload, UserPlus, AlertCircle, PhoneCall } from 'lucide-react';
+import { Download, Plus, Search, Trash2, Upload, UserPlus, AlertCircle } from 'lucide-react';
 import { api, errMsg, Paged } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useDirectory } from '../lib/hooks';
@@ -14,7 +14,7 @@ import { AssignModal, CreateLeadModal } from '../components/LeadModals';
 export interface LeadRow {
   id: string; fullName: string; phoneE164: string | null; email: string | null; city: string | null; status: string;
   campaignName: string | null; adsetName: string | null; createdAt: string; assignedUser: { id: string; fullName: string } | null;
-  source: { key: string; name: string }; nextFollowUpAt: string | null; followUpOverdue: boolean; callCount: number;
+  source: { key: string; name: string }; nextFollowUpAt: string | null; followUpOverdue: boolean;
 }
 
 export default function Leads() {
@@ -36,7 +36,7 @@ export default function Leads() {
   const [deleting, setDeleting] = useState(false);
   const deleteSelected = async () => {
     const n = selected.length;
-    if (!confirm(`Delete ${n} lead${n === 1 ? '' : 's'} permanently?\n\nTheir calls, recordings, notes and follow-ups are deleted too. Linked tasks stay. This cannot be undone.`)) return;
+    if (!confirm(`Delete ${n} lead${n === 1 ? '' : 's'} permanently?\n\nTheir notes, follow-ups and history are deleted too. Linked tasks stay. This cannot be undone.`)) return;
     setDeleting(true);
     try {
       const r = await api.post<{ deleted: number }>('/leads/delete', { ids: selected });
@@ -145,7 +145,7 @@ export default function Leads() {
               <thead>
                 <tr>
                   {canSelect && <Th className="w-8"><input type="checkbox" checked={allChecked} onChange={(e) => setSelected(e.target.checked ? [...new Set([...selected, ...allOnPage])] : selected.filter((x) => !allOnPage.includes(x)))} /></Th>}
-                  <Th>Lead</Th><Th>Status</Th><Th>Campaign</Th><Th>Owner</Th><Th>Next follow-up</Th><Th className="text-right">Calls</Th><Th>Received</Th>
+                  <Th>Lead</Th><Th>Status</Th><Th>Campaign</Th><Th>Owner</Th><Th>Next follow-up</Th><Th>Received</Th>
                 </tr>
               </thead>
               <tbody>
@@ -172,7 +172,6 @@ export default function Leads() {
                         </span>
                       ) : <span className="text-slate-400">—</span>}
                     </Td>
-                    <Td className="text-right tabular-nums">{l.callCount ? <span className="inline-flex items-center gap-1"><PhoneCall className="h-3 w-3 text-slate-400" />{l.callCount}</span> : <span className="text-slate-400">0</span>}</Td>
                     <Td className="whitespace-nowrap text-slate-500">{ago(l.createdAt)}</Td>
                   </tr>
                 ))}

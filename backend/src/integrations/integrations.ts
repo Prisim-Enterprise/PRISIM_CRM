@@ -695,20 +695,6 @@ export class IntegrationsController {
     return { ok: true };
   }
 
-  @Get('integrations/telephony')
-  @RequireAny('integrations.manage')
-  telephony() {
-    const provider = process.env.TELEPHONY_PROVIDER === 'exotel' ? 'exotel' : 'mock';
-    const base = (process.env.PUBLIC_API_URL || 'http://localhost:4000').replace(/\/$/, '');
-    return {
-      provider,
-      configured: provider === 'mock' || !!(process.env.EXOTEL_SID && process.env.EXOTEL_API_KEY && process.env.EXOTEL_API_TOKEN && process.env.EXOTEL_CALLER_ID),
-      callerId: process.env.EXOTEL_CALLER_ID || null,
-      webhookUrl: `${base}/api/v1/telephony/webhooks/${provider}?token=••••••`,
-      publicUrlIsLocal: /localhost|127\.0\.0\.1/.test(base),
-    };
-  }
-
   @Get('audit')
   @RequireAny('audit.view')
   async auditLog(@Query() q: PageQuery & { entityType?: string; actorId?: string }) {

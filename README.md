@@ -1,6 +1,6 @@
 # Prisim CRM
 
-One dashboard for Meta Ads leads, daily follow-ups, call tracking with recordings, Jira-style tasks, users and roles, and employee feedback and queries.
+One dashboard for Meta Ads leads, daily follow-ups with lead alerts, Jira-style tasks, users and roles, and employee feedback and queries.
 
 Built from the *Prisim CRM Business Workflow & Technical Architecture Blueprint v1.0*.
 
@@ -10,7 +10,7 @@ Built from the *Prisim CRM Business Workflow & Technical Architecture Blueprint 
 | Auth | **Supabase Auth** for sign-in, passwords and sessions. Roles and permissions stay in the CRM. |
 | API | NestJS 11 (modular monolith), REST `/api/v1`, Swagger at `/api/docs`. It verifies Supabase access tokens. |
 | Database | PostgreSQL 17 + Prisma 6 |
-| Integrations | Google Sheets API (service account), Exotel click-to-call + recordings, built-in call simulator |
+| Integrations | Google Sheets API (service account), lead webhook |
 
 ## Run it locally (Windows / macOS / Linux)
 
@@ -53,7 +53,7 @@ Uploaded files and recordings are stored in `storage/`. Delete that folder's con
 
 **Follow-ups (Module C).** Today / Overdue / Upcoming / Completed views. Reminders go out 15 minutes before a follow-up is due and again when it becomes overdue. Reschedule history is kept. Completing a follow-up requires either the next action or closing the lead with a reason, so leads are never closed by accident.
 
-**Calls (Module D).** Click-to-call through Exotel: it rings the employee's phone, then the customer, and records the call. Status, duration and recording arrive by an authenticated webhook, and recordings are copied into private storage. Calls can also be logged manually, with an uploaded recording. The Calls page shows who called whom, when, for how long, the outcome and the recording. Recordings play only for the caller, their team leader, or admins, and every play is audited. Until Exotel is configured, a **simulator** exercises the whole flow.
+**Calling (removed).** Click-to-call, call logging, recordings and the Calls page were removed in November 2026. Past call records stay in the `call_logs` table but nothing in the CRM reads them.
 
 **Tasks (Module E).** Kanban board (drag and drop) and list view. Tasks have keys (PRS-12), priorities, due dates, subtasks, checklists, comments, attachments and an activity history. They can be linked to a lead, and there is an optional manager review/approval step. Overdue tasks trigger reminders.
 
@@ -77,7 +77,7 @@ Uploaded files and recordings are stored in `storage/`. Delete that folder's con
 npm test                  # API unit tests
 ```
 
-An end-to-end API check covering roles and permissions, assignment, calls, recordings, tasks, anonymous feedback and import was run during development (59 checks, all passing).
+An end-to-end API check covering roles and permissions, assignment, tasks, anonymous feedback and import was run during development (59 checks, all passing).
 
 ## Project layout
 

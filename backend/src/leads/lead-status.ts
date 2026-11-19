@@ -34,17 +34,3 @@ export function autoAdvance(current: LeadStatus, suggested: LeadStatus): LeadSta
   return b !== undefined && b > a ? suggested : null;
 }
 
-/** Map a call disposition to the lead status it implies. */
-export function statusForCallOutcome(outcome?: string | null): LeadStatus {
-  switch (outcome) {
-    case 'INTERESTED': return 'INTERESTED';
-    case 'CALLBACK': return 'FOLLOW_UP_REQUIRED';
-    case 'CONNECTED':
-    case 'NOT_INTERESTED':
-    case 'CONVERTED': return 'CONTACTED';
-    default: return 'CONTACT_ATTEMPTED';
-  }
-}
-
-export const CONNECTED_OUTCOMES = ['CONNECTED', 'INTERESTED', 'CALLBACK', 'NOT_INTERESTED', 'CONVERTED'];
-export const CALL_OUTCOMES = [...CONNECTED_OUTCOMES, 'NO_ANSWER', 'BUSY', 'SWITCHED_OFF', 'WRONG_NUMBER'];

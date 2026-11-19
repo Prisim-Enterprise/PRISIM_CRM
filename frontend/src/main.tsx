@@ -13,7 +13,6 @@ import Dashboard from './pages/Dashboard';
 import Leads from './pages/Leads';
 import LeadDetail from './pages/LeadDetail';
 import FollowUps from './pages/FollowUps';
-import Calls from './pages/Calls';
 import Tasks from './pages/Tasks';
 import Feedback from './pages/Feedback';
 import Clients, { ClientDetail } from './pages/Clients';
@@ -64,7 +63,6 @@ function App() {
         <Route path="leads" element={<Leads />} />
         <Route path="leads/:id" element={<LeadDetail />} />
         <Route path="follow-ups" element={<FollowUps />} />
-        <Route path="calls" element={<Calls />} />
         <Route path="tasks" element={<Tasks />} />
         <Route path="clients" element={<Clients />} />
         <Route path="clients/:id" element={<ClientDetail />} />

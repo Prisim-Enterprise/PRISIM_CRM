@@ -91,15 +91,13 @@ export class LeadAlerts {
     if (!leads.length) return { nudged: 0, escalated: 0 };
     const ids = leads.map((l) => l.id);
     // Only the owner's own work counts: a manager reassigning or changing status doesn't.
-    const [notes, calls, statuses, done] = await Promise.all([
+    const [notes, statuses, done] = await Promise.all([
       this.prisma.leadNote.groupBy({ by: ['leadId', 'authorId'], where: { leadId: { in: ids } }, _max: { createdAt: true } }),
-      this.prisma.callLog.groupBy({ by: ['leadId', 'userId'], where: { leadId: { in: ids } }, _max: { createdAt: true } }),
       this.prisma.leadStatusHistory.groupBy({ by: ['leadId', 'actorId'], where: { leadId: { in: ids } }, _max: { createdAt: true } }),
       this.prisma.followUp.groupBy({ by: ['leadId', 'ownerId'], where: { leadId: { in: ids }, status: 'COMPLETED' }, _max: { completedAt: true } }),
     ]);
     const key = (leadId: string, userId: string | null) => `${leadId}|${userId}`;
     const noteAt = new Map(notes.map((x) => [key(x.leadId, x.authorId), x._max.createdAt]));
-    const callAt = new Map(calls.map((x) => [key(x.leadId, x.userId), x._max.createdAt]));
     const statusAt = new Map(statuses.map((x) => [key(x.leadId, x.actorId), x._max.createdAt]));
     const doneAt = new Map(done.map((x) => [key(x.leadId, x.ownerId), x._max.completedAt]));
 
@@ -107,7 +105,7 @@ export class LeadAlerts {
     for (const l of leads) {
       const owner = l.assignedUserId!;
       const k = key(l.id, owner);
-      const last = latest(l.assignments[0]?.assignedAt, l.lastContactedAt, noteAt.get(k), callAt.get(k), statusAt.get(k), doneAt.get(k));
+      const last = latest(l.assignments[0]?.assignedAt, l.lastContactedAt, noteAt.get(k), statusAt.get(k), doneAt.get(k));
       if (!last) continue;
       const action = staleAction(last, l.nudgedAt, l.escalatedAt, now, r);
       if (!action) continue;
@@ -120,12 +118,12 @@ export class LeadAlerts {
       });
       if (claimed.count !== 1) continue; // another run got there first
       if (action === 'nudge') {
-        await this.notifications.notify(owner, { type: 'lead.stale', title: `No action on ${l.fullName} for ${idle}`, body: 'Call them, add a note or update the status.', link });
+        await this.notifications.notify(owner, { type: 'lead.stale', title: `No action on ${l.fullName} for ${idle}`, body: 'Contact them, then add a note or update the status.', link });
         nudged++;
       } else {
         await this.notifications.notify(owner, { type: 'lead.stale', title: `Still no action on ${l.fullName} (${idle})`, body: 'Your team leader and managers have been told.', link });
         await this.notifications.notifyMany(await this.bosses(owner, ctx), {
-          type: 'lead.escalated', title: `${l.assignedUser?.fullName ?? 'Someone'} hasn't worked ${l.fullName} for ${idle}`, body: 'Assigned lead with no calls, notes or updates.', link,
+          type: 'lead.escalated', title: `${l.assignedUser?.fullName ?? 'Someone'} hasn't worked ${l.fullName} for ${idle}`, body: 'Assigned lead with no notes, status changes or completed follow-ups.', link,
         });
         escalated++;
       }

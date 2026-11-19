@@ -6,7 +6,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AccessService } from '../common/access.service';
 import { AuthUser, CurrentUser } from '../common/current-user';
 import { addDays, localDateKey, localDayRange, parseLocalDate, startOfLocalDay } from '../common/time';
-import { CONNECTED_OUTCOMES } from '../leads/lead-status';
 import { MonthlyReportController, MonthlyReportService } from './monthly';
 
 class ReportQuery {
@@ -26,8 +25,6 @@ const CLOSED = ['CONVERTED', 'LOST', 'INVALID', 'DUPLICATE'] as const;
  * - Leads in period: leads created (CRM createdAt) within the date range.
  * - Converted / Lost: leads whose status changed to CONVERTED / LOST within the range.
  * - Conversion rate: of the leads created in the range, the share now CONVERTED (cohort rate).
- * - Connected call: outcome is a two-way conversation (connected, interested, callback,
- *   not interested, converted) or a provider call that completed with talk time > 0.
  * - Overdue follow-up: pending and due time is in the past (right now).
  * - All "today" values use the business timezone (APP_TIMEZONE).
  */
@@ -68,18 +65,12 @@ export class ReportsService {
     };
     const inRange = { gte: from, lt: to };
     const userScope = ids === null ? {} : { in: ids };
-    const callWhere: Prisma.CallLogWhereInput = { createdAt: inRange, ...(ids === null ? {} : { userId: userScope }), ...(q.campaign || q.source ? { lead: leadScope } : {}) };
     const fuScope: Prisma.FollowUpWhereInput = ids === null ? {} : { ownerId: userScope };
     const taskScope: Prisma.TaskWhereInput = ids === null ? {} : { OR: [{ assigneeId: userScope }, { assignees: { some: { userId: userScope } } }] };
 
-    const connectedWhere: Prisma.CallLogWhereInput = {
-      ...callWhere,
-      OR: [{ outcome: { in: CONNECTED_OUTCOMES } }, { outcome: null, provider: { not: 'manual' }, status: 'COMPLETED', durationSeconds: { gt: 0 } }],
-    };
-
     const [
       leadsTotal, newToday, assigned, unassigned, convertedInRange, lostInRange, cohortConverted,
-      callsMade, connectedCalls, talk, followUpsToday, overdueFollowUps, followUpsCompleted,
+      followUpsToday, overdueFollowUps, followUpsCompleted,
       pendingTasks, overdueTasks, openFeedback,
     ] = await Promise.all([
       this.prisma.lead.count({ where: { ...leadScope, createdAt: inRange } }),
@@ -91,9 +82,6 @@ export class ReportsService {
       this.prisma.leadStatusHistory.count({ where: { toStatus: 'CONVERTED', createdAt: inRange, lead: leadScope } }),
       this.prisma.leadStatusHistory.count({ where: { toStatus: 'LOST', createdAt: inRange, lead: leadScope } }),
       this.prisma.lead.count({ where: { ...leadScope, createdAt: inRange, status: 'CONVERTED' } }),
-      this.prisma.callLog.count({ where: callWhere }),
-      this.prisma.callLog.count({ where: connectedWhere }),
-      this.prisma.callLog.aggregate({ where: callWhere, _sum: { durationSeconds: true } }),
       this.prisma.followUp.count({ where: { ...fuScope, status: 'PENDING', dueAt: { gte: today.start, lt: today.end } } }),
       this.prisma.followUp.count({ where: { ...fuScope, status: 'PENDING', dueAt: { lt: now } } }),
       this.prisma.followUp.count({ where: { ...fuScope, status: 'COMPLETED', completedAt: inRange } }),
@@ -105,13 +93,11 @@ export class ReportsService {
     ]);
 
     // Charts
-    const [leadDates, callRows, statusGroups, campaignGroups, campaignConverted, outcomeGroups, sourceGroups, sourceToday, sourceConverted, sources] = await Promise.all([
+    const [leadDates, statusGroups, campaignGroups, campaignConverted, sourceGroups, sourceToday, sourceConverted, sources] = await Promise.all([
       this.prisma.lead.findMany({ where: { ...leadScope, createdAt: inRange }, select: { createdAt: true } }),
-      this.prisma.callLog.findMany({ where: callWhere, select: { createdAt: true, outcome: true, status: true, durationSeconds: true, provider: true } }),
       this.prisma.lead.groupBy({ by: ['status'], where: { ...leadScope, createdAt: inRange }, _count: true }),
       this.prisma.lead.groupBy({ by: ['campaignName'], where: { ...leadScope, createdAt: inRange }, _count: true, orderBy: { _count: { campaignName: 'desc' } }, take: 12 }),
       this.prisma.lead.groupBy({ by: ['campaignName'], where: { ...leadScope, createdAt: inRange, status: 'CONVERTED' }, _count: true }),
-      this.prisma.callLog.groupBy({ by: ['outcome'], where: callWhere, _count: true }),
       this.prisma.lead.groupBy({ by: ['sourceId'], where: { ...leadScope, createdAt: inRange }, _count: true }),
       this.prisma.lead.groupBy({ by: ['sourceId'], where: { ...leadScope, createdAt: { gte: today.start, lt: today.end } }, _count: true }),
       this.prisma.lead.groupBy({ by: ['sourceId'], where: { ...leadScope, createdAt: inRange, status: 'CONVERTED' }, _count: true }),
@@ -120,14 +106,8 @@ export class ReportsService {
 
     const days: string[] = [];
     for (let d = from; d < to; d = addDays(d, 1)) days.push(localDateKey(d));
-    const byDay = new Map(days.map((d) => [d, { date: d, leads: 0, calls: 0, connected: 0 }]));
+    const byDay = new Map(days.map((d) => [d, { date: d, leads: 0 }]));
     for (const l of leadDates) { const k = byDay.get(localDateKey(l.createdAt)); if (k) k.leads++; }
-    for (const c of callRows) {
-      const k = byDay.get(localDateKey(c.createdAt));
-      if (!k) continue;
-      k.calls++;
-      if ((c.outcome && CONNECTED_OUTCOMES.includes(c.outcome)) || (!c.outcome && c.provider !== 'manual' && c.status === 'COMPLETED' && (c.durationSeconds ?? 0) > 0)) k.connected++;
-    }
 
     return {
       range: { from: localDateKey(from), to: localDateKey(addDays(to, -1)) },
@@ -136,7 +116,6 @@ export class ReportsService {
         leadsTotal, newToday, assigned, unassigned,
         converted: convertedInRange, lost: lostInRange,
         conversionRate: leadsTotal ? cohortConverted / leadsTotal : 0,
-        callsMade, connectedCalls, talkTimeSeconds: talk._sum.durationSeconds ?? 0,
         followUpsToday, overdueFollowUps, followUpsCompleted,
         pendingTasks, overdueTasks, openFeedback,
       },
@@ -147,7 +126,6 @@ export class ReportsService {
           campaign: g.campaignName ?? '(none)', leads: g._count,
           converted: campaignConverted.find((c) => c.campaignName === g.campaignName)?._count ?? 0,
         })),
-        callOutcomes: outcomeGroups.map((g) => ({ outcome: g.outcome ?? 'NOT_RECORDED', count: g._count })),
         leadsBySource: sourceGroups
           .map((g) => {
             const src = sources.find((x) => x.id === g.sourceId);
@@ -163,7 +141,7 @@ export class ReportsService {
   }
 
   /**
-   * Recent activity across the CRM: lead updates, notes, calls, follow-ups, tasks,
+   * Recent activity across the CRM: lead updates, notes, follow-ups, tasks,
    * feedback and client work. Admins see everyone; others see their scope (own/team).
    */
   async activity(user: AuthUser, q: ReportQuery) {
@@ -174,10 +152,9 @@ export class ReportsService {
     const lead = { select: { id: true, fullName: true } } as const;
     const label = (v: string | null | undefined) => (v ?? '').toLowerCase().replace(/_/g, ' ');
 
-    const [statuses, notes, calls, followUps, assignments, taskActs, feedback, clientUpdates] = await Promise.all([
+    const [statuses, notes, followUps, assignments, taskActs, feedback, clientUpdates] = await Promise.all([
       this.prisma.leadStatusHistory.findMany({ where: { actorId: ids === null ? { not: null } : { in: ids } }, include: { actor, lead }, orderBy: { createdAt: 'desc' }, take }),
       this.prisma.leadNote.findMany({ where: by('authorId'), include: { author: actor, lead }, orderBy: { createdAt: 'desc' }, take }),
-      this.prisma.callLog.findMany({ where: by('userId'), include: { user: actor, lead }, orderBy: { createdAt: 'desc' }, take }),
       this.prisma.followUp.findMany({ where: by('ownerId'), include: { owner: actor, createdBy: actor, lead }, orderBy: { updatedAt: 'desc' }, take }),
       this.prisma.leadAssignment.findMany({ where: { assignedById: ids === null ? { not: null } : { in: ids } }, include: { assignedBy: actor, user: actor, lead }, orderBy: { assignedAt: 'desc' }, take }),
       this.prisma.taskActivity.findMany({ where: { actorId: ids === null ? { not: null } : { in: ids } }, include: { actor, task: { select: { id: true, number: true, title: true } } }, orderBy: { createdAt: 'desc' }, take }),
@@ -199,11 +176,6 @@ export class ReportsService {
         text: `moved ${h.lead.fullName} ${h.fromStatus ? `from ${label(h.fromStatus)} ` : ''}to ${label(h.toStatus)}`, detail: h.reason, link: `/leads/${h.lead.id}`,
       })),
       ...notes.map((n) => ({ id: `nt-${n.id}`, at: n.createdAt, kind: 'note', actor: n.author, text: `added a note on ${n.lead.fullName}`, detail: n.body.slice(0, 160), link: `/leads/${n.lead.id}` })),
-      ...calls.map((c) => ({
-        id: `cl-${c.id}`, at: c.createdAt, kind: 'call', actor: c.user,
-        text: `called ${c.lead.fullName}${c.outcome ? ` (${label(c.outcome)})` : c.status !== 'COMPLETED' ? ` (${label(c.status)})` : ''}${c.durationSeconds ? `, ${Math.floor(c.durationSeconds / 60)}m ${c.durationSeconds % 60}s` : ''}`,
-        detail: c.notes, link: `/leads/${c.lead.id}`,
-      })),
       ...followUps.map((f) => f.status === 'COMPLETED'
         ? { id: `fu-${f.id}`, at: f.completedAt ?? f.updatedAt, kind: 'followup', actor: f.owner, text: `completed a ${f.type} follow-up with ${f.lead.fullName}`, detail: f.outcome, link: `/leads/${f.lead.id}` }
         : f.status === 'CANCELLED'
@@ -245,12 +217,9 @@ export class ReportsService {
       orderBy: { fullName: 'asc' },
     });
     const uids = users.map((u) => u.id);
-    const [assignedInRange, openLeads, calls, connected, talk, fuDone, fuMissed, converted, tasksDone, tasksOverdue] = await Promise.all([
+    const [assignedInRange, openLeads, fuDone, fuMissed, converted, tasksDone, tasksOverdue] = await Promise.all([
       this.prisma.leadAssignment.groupBy({ by: ['userId'], where: { userId: { in: uids }, assignedAt: inRange }, _count: true }),
       this.prisma.lead.groupBy({ by: ['assignedUserId'], where: { assignedUserId: { in: uids }, status: { notIn: [...CLOSED] } }, _count: true }),
-      this.prisma.callLog.groupBy({ by: ['userId'], where: { userId: { in: uids }, createdAt: inRange }, _count: true }),
-      this.prisma.callLog.groupBy({ by: ['userId'], where: { userId: { in: uids }, createdAt: inRange, outcome: { in: CONNECTED_OUTCOMES } }, _count: true }),
-      this.prisma.callLog.groupBy({ by: ['userId'], where: { userId: { in: uids }, createdAt: inRange }, _sum: { durationSeconds: true } }),
       this.prisma.followUp.groupBy({ by: ['ownerId'], where: { ownerId: { in: uids }, status: 'COMPLETED', completedAt: inRange }, _count: true }),
       this.prisma.followUp.groupBy({ by: ['ownerId'], where: { ownerId: { in: uids }, status: 'PENDING', dueAt: { lt: now } }, _count: true }),
       this.prisma.leadStatusHistory.groupBy({ by: ['actorId'], where: { actorId: { in: uids }, toStatus: 'CONVERTED', createdAt: inRange }, _count: true }),
@@ -259,15 +228,12 @@ export class ReportsService {
     ]);
     const pick = <T extends { _count: number }>(arr: T[], key: keyof T, id: string) => arr.find((r) => r[key] === id)?._count ?? 0;
     return users.map((u) => {
-      const callsMade = pick(calls, 'userId', u.id);
       const leadsAssigned = pick(assignedInRange, 'userId', u.id);
       const conv = pick(converted, 'actorId', u.id);
       return {
         userId: u.id, name: u.fullName,
         team: (u.teamMemberships.length ? u.teamMemberships.map((m) => m.team.name).join(', ') : u.team?.name) ?? null,
         leadsAssigned, openLeads: pick(openLeads, 'assignedUserId', u.id),
-        callsMade, connectedCalls: pick(connected, 'userId', u.id),
-        talkTimeSeconds: talk.find((t) => t.userId === u.id)?._sum.durationSeconds ?? 0,
         followUpsCompleted: pick(fuDone, 'ownerId', u.id), missedFollowUps: pick(fuMissed, 'ownerId', u.id),
         converted: conv, conversionPerAssigned: leadsAssigned ? conv / leadsAssigned : null,
         tasksCompleted: pick(tasksDone, 'userId', u.id), overdueTasks: pick(tasksOverdue, 'userId', u.id),

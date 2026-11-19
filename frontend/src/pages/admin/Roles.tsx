@@ -260,7 +260,7 @@ export default function AdminRoles() {
   return (
     <div>
       <PageHeader title="Roles & Permissions"
-        subtitle="Roles set the default permissions. Individual users can then be allowed or denied specific permissions. Everyone can always work their own leads, tasks, calls and feedback, and the server enforces every rule."
+        subtitle="Roles set the default permissions. Individual users can then be allowed or denied specific permissions. Everyone can always work their own leads, tasks and feedback, and the server enforces every rule."
         actions={editable && tab === 'role' && <Button onClick={() => setNewRole({ name: '', description: '' })}><Plus className="h-4 w-4" />New role</Button>} />
       <div className="mb-4">
         <Tabs value={tab} onChange={(t) => setSp(t === 'user' ? { tab: 'user' } : {}, { replace: true })}

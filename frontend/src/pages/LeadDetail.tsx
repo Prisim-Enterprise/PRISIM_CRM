@@ -1,20 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import clsx from 'clsx';
 import {
-  ArrowLeft, Phone, PhoneCall, PhoneIncoming, PhoneOutgoing, CalendarPlus, NotebookPen, ArrowRightLeft, UserPlus, UserMinus,
+  ArrowLeft, Phone, CalendarPlus, NotebookPen, ArrowRightLeft, UserPlus, UserMinus,
   Mail, MapPin, Megaphone, Pencil, CheckCircle2, Clock, XCircle, ListTodo, Copy, Trash2,
 } from 'lucide-react';
 import { api, errMsg } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import {
-  CALL_OUTCOMES, CALL_STATUS, FOLLOW_UP_TYPES, LEAD_STATUS, ago, fmtDateTime, fmtDuration, fmtPhone, fmtRelativeDay, toLocalInput,
+  FOLLOW_UP_TYPES, LEAD_STATUS, ago, fmtDateTime, fmtPhone, fmtRelativeDay, toLocalInput,
 } from '../lib/format';
 import { Avatar, Badge, Button, Card, Empty, ErrorBox, Field, Input, Modal, Spinner, Tabs, Textarea } from '../components/ui';
-import { AssignModal, CompleteFollowUpModal, FollowUpModal, LogCallModal, StatusModal } from '../components/LeadModals';
-import { RecordingPlayer, UploadRecording } from '../components/Recording';
+import { AssignModal, CompleteFollowUpModal, FollowUpModal, StatusModal } from '../components/LeadModals';
 import { CreateTaskModal } from './Tasks';
 
 interface Lead {
@@ -26,34 +25,13 @@ interface Lead {
   permissions: { canEdit: boolean; canAssign: boolean };
 }
 interface Actor { id: string; fullName: string }
-interface Event { type: 'status' | 'assignment' | 'note' | 'call' | 'follow_up'; at: string; actor: Actor | null; data: Record<string, any> }
+interface Event { type: 'status' | 'assignment' | 'note' | 'follow_up'; at: string; actor: Actor | null; data: Record<string, any> }
 interface FollowUp { id: string; dueAt: string; type: string; note: string | null; status: string; isOverdue: boolean; owner: Actor; lead: { fullName: string } }
-interface Call { id: string; status: string; durationSeconds: number | null; outcome: string | null }
-
-const TERMINAL = ['COMPLETED', 'NO_ANSWER', 'BUSY', 'FAILED', 'CANCELED'];
 
 /** Extra answers from the website form / webhook (message, service, budget…), minus what's shown elsewhere. */
 const SHOWN_KEYS = /^(id|lead_id|full_name|name|your_name|first_name|phone|phone_number|mobile|mobile_no|mobile_number|phone_no|contact_number|whatsapp|email|e_mail|email_address|city|campaign_name|adset_name|ad_name|form_name|created_time|timestamp|key|source)$/;
 function formDetails(l: { sourceData: Record<string, string> | null }) {
   return Object.entries(l.sourceData ?? {}).filter(([k, v]) => v && String(v).trim() && !SHOWN_KEYS.test(k)).slice(0, 30);
-}
-
-function LiveCall({ callId, onDone }: { callId: string; onDone: (c: Call) => void }) {
-  const { data } = useQuery({ queryKey: ['call', callId], queryFn: () => api.get<Call>(`/calls/${callId}`), refetchInterval: 2000 });
-  const fired = useRef(false);
-  useEffect(() => {
-    if (data && TERMINAL.includes(data.status) && !fired.current) { fired.current = true; onDone(data); }
-  }, [data, onDone]);
-  const st = CALL_STATUS[data?.status ?? 'INITIATED'];
-  return (
-    <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-      <span className="relative flex h-3 w-3"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" /><span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" /></span>
-      <div className="text-sm">
-        <p className="font-medium text-emerald-900">{st?.label ?? data?.status}</p>
-        <p className="text-xs text-emerald-700">Your phone rings first. Answer it and you'll be connected to the customer.</p>
-      </div>
-    </div>
-  );
 }
 
 function EditLeadModal({ lead, open, onClose }: { lead: Lead; open: boolean; onClose: () => void }) {
@@ -115,35 +93,13 @@ export function FollowUpActions({ fu, onComplete, onReschedule }: { fu: FollowUp
   );
 }
 
-function TimelineItem({ e, canEdit, meId }: { e: Event; canEdit: boolean; meId?: string }) {
+function TimelineItem({ e, meId }: { e: Event; meId?: string }) {
   const who = e.actor ? (e.actor.id === meId ? 'You' : e.actor.fullName) : 'System';
   let icon = <NotebookPen className="h-4 w-4" />;
   let tone = 'bg-slate-100 text-slate-600';
   let body: React.ReactNode = null;
   let title: React.ReactNode = null;
-  if (e.type === 'call') {
-    const d = e.data;
-    icon = d.direction === 'INBOUND' ? <PhoneIncoming className="h-4 w-4" /> : <PhoneOutgoing className="h-4 w-4" />;
-    tone = d.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700';
-    title = (
-      <>
-        <b>{who}</b> {d.direction === 'INBOUND' ? 'received a call from the customer' : 'called the customer'}
-        {d.provider !== 'manual' && <Badge className="ml-2 bg-slate-100 text-slate-600">via {d.provider === 'mock' ? 'simulator' : d.provider}</Badge>}
-      </>
-    );
-    body = (
-      <div className="mt-1.5 space-y-1.5">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <Badge className={CALL_STATUS[d.status]?.color}>{CALL_STATUS[d.status]?.label}</Badge>
-          {d.outcome && <Badge className="bg-indigo-50 text-indigo-700">{CALL_OUTCOMES[d.outcome] ?? d.outcome}</Badge>}
-          {d.durationSeconds ? <span className="text-slate-500">{fmtDuration(d.durationSeconds)}</span> : null}
-          <span className="text-slate-400">{fmtPhone(d.fromNumber)} → {fmtPhone(d.toNumber)}</span>
-        </div>
-        {d.notes && <p className="whitespace-pre-wrap text-sm text-slate-700">{d.notes}</p>}
-        {d.hasRecording ? <RecordingPlayer callId={d.id} canPlay={d.canPlayRecording} /> : canEdit && TERMINAL.includes(d.status) && d.status === 'COMPLETED' ? <UploadRecording callId={d.id} /> : null}
-      </div>
-    );
-  } else if (e.type === 'note') {
+  if (e.type === 'note') {
     title = <><b>{who}</b> added a note</>;
     body = <p className="mt-1 whitespace-pre-wrap rounded-lg bg-amber-50/60 px-3 py-2 text-sm text-slate-700">{e.data.body}</p>;
     tone = 'bg-amber-100 text-amber-700';
@@ -196,28 +152,20 @@ export default function LeadDetail() {
     onError: (e) => toast.error(errMsg(e)),
   });
   const confirmDelete = () => {
-    if (confirm('Delete this lead permanently?\n\nIts calls, recordings, notes and follow-ups are deleted too. Linked tasks stay. This cannot be undone.')) removeLead.mutate();
+    if (confirm('Delete this lead permanently?\n\nIts notes, follow-ups and history are deleted too. Linked tasks stay. This cannot be undone.')) removeLead.mutate();
   };
   const lead = useQuery({ queryKey: ['lead', id], queryFn: () => api.get<Lead>(`/leads/${id}`) });
   const timeline = useQuery({ queryKey: ['timeline', id], queryFn: () => api.get<Event[]>(`/leads/${id}/history`) });
   const pending = useQuery({ queryKey: ['follow-ups', 'lead', id], queryFn: () => api.get<{ items: FollowUp[] }>('/follow-ups', { leadId: id, view: 'pending', pageSize: 20 }) });
-  const provider = useQuery({ queryKey: ['call-provider'], queryFn: () => api.get<{ provider: string; configured: boolean; simulated: boolean }>('/calls/provider'), staleTime: Infinity });
-  const [modal, setModal] = useState<null | 'call' | 'followup' | 'status' | 'assign' | 'edit' | 'task'>(null);
-  const [dispositionFor, setDispositionFor] = useState<string | null>(null);
-  const [liveCall, setLiveCall] = useState<string | null>(null);
+  const [modal, setModal] = useState<null | 'followup' | 'status' | 'assign' | 'edit' | 'task'>(null);
   const [complete, setComplete] = useState<FollowUp | null>(null);
   const [resched, setResched] = useState<FollowUp | null>(null);
   const [note, setNote] = useState('');
-  const [filter, setFilter] = useState<'all' | 'call' | 'note' | 'follow_up' | 'status'>('all');
+  const [filter, setFilter] = useState<'all' | 'note' | 'follow_up' | 'status'>('all');
 
   const addNote = useMutation({
     mutationFn: () => api.post(`/leads/${id}/notes`, { body: note }),
     onSuccess: () => { setNote(''); qc.invalidateQueries({ queryKey: ['timeline', id] }); },
-    onError: (e) => toast.error(errMsg(e)),
-  });
-  const startCall = useMutation({
-    mutationFn: () => api.post<{ id: string }>('/calls/click-to-call', { leadId: id }),
-    onSuccess: (c) => { setLiveCall(c.id); qc.invalidateQueries({ queryKey: ['timeline', id] }); },
     onError: (e) => toast.error(errMsg(e)),
   });
   const unassign = async () => {
@@ -247,19 +195,12 @@ export default function LeadDetail() {
             </div>
             <p className="text-sm text-slate-500">
               {l.assignedUser ? <>Owner: <b className="text-slate-700">{l.assignedUser.id === me?.id ? 'You' : l.assignedUser.fullName}</b></> : <span className="text-amber-600">Unassigned</span>}
-              {' · '}received {ago(l.createdAt)}{l.lastContactedAt && <> · last spoke {ago(l.lastContactedAt)}</>}
+              {' · '}received {ago(l.createdAt)}{l.lastContactedAt && <> · last contacted {ago(l.lastContactedAt)}</>}
             </p>
             {l.closeReason && <p className="text-sm text-slate-500">Reason: {l.closeReason}</p>}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {canEdit && l.phoneE164 && !closed && (
-            <Button variant="success" loading={startCall.isPending} disabled={!!liveCall} onClick={() => startCall.mutate()}
-              title={provider.data?.simulated ? 'Simulated call (telephony provider not connected yet)' : 'Calls your phone, then connects the customer'}>
-              <PhoneCall className="h-4 w-4" />Call{provider.data?.simulated ? ' (simulated)' : ''}
-            </Button>
-          )}
-          {canEdit && <Button variant="secondary" onClick={() => setModal('call')}><Phone className="h-4 w-4" />Log call</Button>}
           {canEdit && !closed && <Button variant="secondary" onClick={() => setModal('followup')}><CalendarPlus className="h-4 w-4" />Follow-up</Button>}
           {canEdit && <Button variant="secondary" onClick={() => setModal('status')}><ArrowRightLeft className="h-4 w-4" />{closed ? 'Reopen' : 'Status'}</Button>}
           {canAssign && <Button variant="secondary" onClick={() => setModal('assign')}><UserPlus className="h-4 w-4" />{l.assignedUser ? 'Reassign' : 'Assign'}</Button>}
@@ -270,13 +211,6 @@ export default function LeadDetail() {
       </div>
 
       {!canEdit && <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-600">You can view this lead, but only its owner{l.assignedUser ? ` (${l.assignedUser.fullName})` : ''} or a manager can update it.</div>}
-      {liveCall && <div className="mb-4"><LiveCall callId={liveCall} onDone={(c) => {
-        setLiveCall(null);
-        qc.invalidateQueries({ queryKey: ['timeline', id] }); qc.invalidateQueries({ queryKey: ['lead', id] });
-        toast.info(c.status === 'COMPLETED' ? `Call ended (${fmtDuration(c.durationSeconds)})` : `Call ${CALL_STATUS[c.status]?.label.toLowerCase()}`);
-        setDispositionFor(c.id);
-      }} /></div>}
-
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="space-y-5">
           <Card title="Contact" actions={canEdit && <button onClick={() => setModal('edit')} className="text-slate-400 hover:text-indigo-600"><Pencil className="h-4 w-4" /></button>}>
@@ -348,7 +282,7 @@ export default function LeadDetail() {
           )}
           <div className="px-4 pt-2">
             <Tabs value={filter} onChange={setFilter} tabs={[
-              { value: 'all', label: 'All activity' }, { value: 'call', label: 'Calls', count: counts('call') },
+              { value: 'all', label: 'All activity' },
               { value: 'note', label: 'Notes', count: counts('note') }, { value: 'follow_up', label: 'Follow-ups', count: counts('follow_up') },
               { value: 'status', label: 'Status & owner' },
             ]} />
@@ -356,15 +290,13 @@ export default function LeadDetail() {
           <div className="p-4">
             {timeline.isLoading ? <Spinner /> : !events.length ? <Empty title="No activity yet" /> : (
               <ul className="relative before:absolute before:bottom-4 before:left-4 before:top-2 before:w-px before:bg-slate-200">
-                {events.map((e, i) => <TimelineItem key={i} e={e} canEdit={canEdit} meId={me?.id} />)}
+                {events.map((e, i) => <TimelineItem key={i} e={e} meId={me?.id} />)}
               </ul>
             )}
           </div>
         </Card>
       </div>
 
-      <LogCallModal open={modal === 'call'} onClose={() => setModal(null)} leadId={l.id} />
-      {dispositionFor && <LogCallModal open onClose={() => setDispositionFor(null)} leadId={l.id} callId={dispositionFor} />}
       <FollowUpModal open={modal === 'followup'} onClose={() => setModal(null)} leadId={l.id} />
       {modal === 'status' && <StatusModal open onClose={() => setModal(null)} lead={l} />}
       <AssignModal open={modal === 'assign'} onClose={() => setModal(null)} leadIds={[l.id]} />

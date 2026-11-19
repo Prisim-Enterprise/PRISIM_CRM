@@ -14,29 +14,6 @@ export const LEAD_STATUS: Record<string, { label: string; color: string }> = {
   DUPLICATE: { label: 'Duplicate', color: 'bg-stone-200 text-stone-700' },
 };
 
-export const CALL_OUTCOMES: Record<string, string> = {
-  CONNECTED: 'Connected',
-  INTERESTED: 'Interested',
-  CALLBACK: 'Call back later',
-  NOT_INTERESTED: 'Not interested',
-  CONVERTED: 'Converted',
-  NO_ANSWER: 'No answer',
-  BUSY: 'Busy',
-  SWITCHED_OFF: 'Switched off / unreachable',
-  WRONG_NUMBER: 'Wrong number',
-};
-
-export const CALL_STATUS: Record<string, { label: string; color: string }> = {
-  INITIATED: { label: 'Ringing you…', color: 'bg-sky-100 text-sky-800' },
-  RINGING: { label: 'Ringing', color: 'bg-sky-100 text-sky-800' },
-  IN_PROGRESS: { label: 'In progress', color: 'bg-emerald-100 text-emerald-800' },
-  COMPLETED: { label: 'Completed', color: 'bg-green-100 text-green-800' },
-  NO_ANSWER: { label: 'No answer', color: 'bg-amber-100 text-amber-800' },
-  BUSY: { label: 'Busy', color: 'bg-amber-100 text-amber-800' },
-  FAILED: { label: 'Failed', color: 'bg-rose-100 text-rose-800' },
-  CANCELED: { label: 'Cancelled', color: 'bg-slate-200 text-slate-700' },
-};
-
 export const TASK_STATUS: Record<string, { label: string; color: string; dot: string }> = {
   TODO: { label: 'To do', color: 'bg-slate-100 text-slate-700', dot: 'bg-slate-400' },
   IN_PROGRESS: { label: 'In progress', color: 'bg-blue-100 text-blue-800', dot: 'bg-blue-500' },

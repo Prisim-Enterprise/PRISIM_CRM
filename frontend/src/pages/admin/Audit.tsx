@@ -13,7 +13,7 @@ export default function AdminAudit() {
   const { data, isLoading } = useQuery({ queryKey: ['audit', page, entityType], queryFn: () => api.get<Paged<Entry>>('/audit', { page, pageSize: 50, entityType }) });
   return (
     <div>
-      <PageHeader title="Audit log" subtitle="Who changed what and when: logins, assignments, status changes, permissions, exports, recordings played"
+      <PageHeader title="Audit log" subtitle="Who changed what and when: logins, assignments, status changes, permissions, exports, chat backup views"
         actions={
           <Select value={entityType} onChange={(e) => { setEntityType(e.target.value); setPage(1); }} className="w-44">
             <option value="">All areas</option>

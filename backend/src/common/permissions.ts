@@ -15,11 +15,6 @@ export const PERMISSIONS = {
   // Follow-ups
   'followups.view.all': ['Follow-ups', "View everyone's follow-ups"],
   'followups.view.team': ['Follow-ups', "View own team's follow-ups"],
-  // Calls
-  'calls.view.all': ['Calls', 'View all call logs'],
-  'calls.view.team': ['Calls', "View own team's call logs"],
-  'calls.recordings.all': ['Calls', 'Listen to all call recordings'],
-  'calls.recordings.team': ['Calls', "Listen to own team's recordings"],
   // Tasks
   // Tasks are private: people see the tasks they are on or created. Only these see every task.
   'tasks.view.all': ['Tasks', 'View all tasks'],
@@ -57,7 +52,7 @@ export const PERMISSIONS = {
   'users.manage': ['Administration', 'Create and edit users, reset passwords'],
   'teams.manage': ['Administration', 'Create and edit teams'],
   'roles.manage': ['Administration', 'Edit roles and permissions'],
-  'integrations.manage': ['Administration', 'Configure Google Sheets and telephony'],
+  'integrations.manage': ['Administration', 'Configure Google Sheets, the lead webhook and lead alerts'],
   'audit.view': ['Administration', 'View the audit log'],
 } as const;
 
@@ -85,7 +80,7 @@ export const DEFAULT_ROLES: { key: string; name: string; description: string; pe
     description: 'Monitors and distributes work within their team.',
     permissions: [
       'leads.view.all', 'leads.edit.team', 'leads.assign.team',
-      'followups.view.team', 'calls.view.team', 'calls.recordings.team',
+      'followups.view.team',
       'tasks.create_for_others',
       'reports.view.team', 'users.view',
     ],
@@ -93,7 +88,7 @@ export const DEFAULT_ROLES: { key: string; name: string; description: string; pe
   {
     key: 'tech',
     name: 'Tech',
-    description: 'Runs the system: Google Sheets and telephony setup, lead imports, sync troubleshooting and audit review.',
+    description: 'Runs the system: Google Sheets and lead webhook setup, lead imports, sync troubleshooting and audit review.',
     permissions: ['integrations.manage', 'leads.import', 'leads.view.all', 'users.view', 'audit.view'],
   },
   {

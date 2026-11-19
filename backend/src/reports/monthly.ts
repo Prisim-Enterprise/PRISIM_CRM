@@ -14,14 +14,14 @@ class MonthQuery {
 interface PersonRow {
   userId: string; name: string; teams: string[];
   tasksAssigned: number; tasksCompleted: number; onTime: number; late: number; overdueOpen: number; avgDaysToComplete: number | null;
-  callsMade: number; followUpsCompleted: number; leadsConverted: number; clientWorkDone: number; seoUpdates: number; mediaDone: number;
+  followUpsCompleted: number; leadsConverted: number; clientWorkDone: number; seoUpdates: number; mediaDone: number;
 }
 interface TaskRow {
   taskId: string; key: string; title: string; priority: string; people: string[]; teams: string[];
   createdAt: Date; dueAt: Date | null; completedAt: Date; onTime: boolean;
 }
 
-const NUMERIC = ['tasksAssigned', 'tasksCompleted', 'onTime', 'late', 'overdueOpen', 'callsMade', 'followUpsCompleted', 'leadsConverted', 'clientWorkDone', 'seoUpdates', 'mediaDone'] as const;
+const NUMERIC = ['tasksAssigned', 'tasksCompleted', 'onTime', 'late', 'overdueOpen', 'followUpsCompleted', 'leadsConverted', 'clientWorkDone', 'seoUpdates', 'mediaDone'] as const;
 type Counts = Record<(typeof NUMERIC)[number], number>;
 const NO_TEAM = 'No team';
 
@@ -54,7 +54,7 @@ export class MonthlyReportService {
     // Everyone counts in each team they belong to.
     const teamsOf = new Map(people.map((p) => [p.id, p.teamMemberships.length ? p.teamMemberships.map((m) => m.team.name) : p.team ? [p.team.name] : []]));
 
-    const [done, assigned, overdue, calls, followUps, converted, clientWork, seo, media] = await Promise.all([
+    const [done, assigned, overdue, followUps, converted, clientWork, seo, media] = await Promise.all([
       // Finished this month. A shared task counts for each person on it.
       this.prisma.task.findMany({
         where: { status: 'DONE', completedAt: inMonth, assignees: { some: { userId: { in: uids } } } },
@@ -68,7 +68,6 @@ export class MonthlyReportService {
         where: { userId: { in: uids }, task: { createdAt: { lt: to }, dueAt: { lt: to }, OR: [{ completedAt: null }, { completedAt: { gte: to } }] } },
         _count: true,
       }),
-      this.prisma.callLog.groupBy({ by: ['userId'], where: { userId: { in: uids }, createdAt: inMonth }, _count: true }),
       this.prisma.followUp.groupBy({ by: ['ownerId'], where: { ownerId: { in: uids }, status: 'COMPLETED', completedAt: inMonth }, _count: true }),
       this.prisma.leadStatusHistory.groupBy({ by: ['actorId'], where: { actorId: { in: uids }, toStatus: 'CONVERTED', createdAt: inMonth }, _count: true }),
       this.prisma.clientWork.findMany({ where: { status: 'DONE', completedAt: inMonth }, select: { assignees: { select: { userId: true } } } }),
@@ -90,7 +89,6 @@ export class MonthlyReportService {
         late: mine.filter((t) => !onTime(t)).length,
         overdueOpen: count(overdue, 'userId', p.id),
         avgDaysToComplete: days.length ? Math.round((days.reduce((a, b) => a + b, 0) / days.length) * 10) / 10 : null,
-        callsMade: count(calls, 'userId', p.id),
         followUpsCompleted: count(followUps, 'ownerId', p.id),
         leadsConverted: count(converted, 'actorId', p.id),
         clientWorkDone: clientWork.filter((w) => w.assignees.some((a) => a.userId === p.id)).length,
@@ -127,7 +125,7 @@ export class MonthlyReportService {
       onTime: tasks.filter((t) => t.onTime).length,
       late: tasks.filter((t) => !t.onTime).length,
       onTimeRate: totalDone ? tasks.filter((t) => t.onTime).length / totalDone : null,
-      callsMade: all.callsMade, followUpsCompleted: all.followUpsCompleted, leadsConverted: all.leadsConverted,
+      followUpsCompleted: all.followUpsCompleted, leadsConverted: all.leadsConverted,
       clientWorkDone: all.clientWorkDone, seoUpdates: all.seoUpdates, mediaDone: all.mediaDone,
       people: rows.length,
     };
@@ -145,16 +143,16 @@ export class MonthlyReportService {
     const line = (...cells: unknown[]) => cells.map(q).join(',');
     const date = (d: Date | null) => (d ? localDateKey(d) : '');
     const monthName = new Date(`${r.month}-15T00:00:00Z`).toLocaleString('en-IN', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-    const cols = ['Tasks assigned', 'Tasks completed', 'On time', 'Late', 'Overdue at month end', 'Calls made', 'Follow-ups done', 'Leads converted', 'Client work done', 'SEO updates', 'Media done'];
-    const vals = (x: Record<string, unknown>) => ['tasksAssigned', 'tasksCompleted', 'onTime', 'late', 'overdueOpen', 'callsMade', 'followUpsCompleted', 'leadsConverted', 'clientWorkDone', 'seoUpdates', 'mediaDone'].map((k) => x[k] ?? '');
+    const cols = ['Tasks assigned', 'Tasks completed', 'On time', 'Late', 'Overdue at month end', 'Follow-ups done', 'Leads converted', 'Client work done', 'SEO updates', 'Media done'];
+    const vals = (x: Record<string, unknown>) => ['tasksAssigned', 'tasksCompleted', 'onTime', 'late', 'overdueOpen', 'followUpsCompleted', 'leadsConverted', 'clientWorkDone', 'seoUpdates', 'mediaDone'].map((k) => x[k] ?? '');
     const out = [
       line(`Prisim CRM monthly report: ${monthName}`),
       line(r.final ? 'Final (the month has ended)' : `In progress (month not finished), generated ${r.generatedAt.toISOString()}`),
       '',
       line('Summary'),
-      line('Tasks assigned', 'Tasks completed', 'On time', 'Late', 'On-time rate', 'Calls made', 'Follow-ups done', 'Leads converted', 'Client work done', 'SEO updates', 'Media done'),
+      line('Tasks assigned', 'Tasks completed', 'On time', 'Late', 'On-time rate', 'Follow-ups done', 'Leads converted', 'Client work done', 'SEO updates', 'Media done'),
       line(r.summary.tasksAssigned, r.summary.tasksCompleted, r.summary.onTime, r.summary.late, r.summary.onTimeRate === null ? '' : `${Math.round(r.summary.onTimeRate * 100)}%`,
-        r.summary.callsMade, r.summary.followUpsCompleted, r.summary.leadsConverted, r.summary.clientWorkDone, r.summary.seoUpdates, r.summary.mediaDone),
+        r.summary.followUpsCompleted, r.summary.leadsConverted, r.summary.clientWorkDone, r.summary.seoUpdates, r.summary.mediaDone),
       '',
       line('By team'),
       line('Team', 'Members', ...cols),

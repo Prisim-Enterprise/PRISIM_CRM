@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  CheckCircle2, AlertTriangle, Copy, ExternalLink, Globe, RefreshCw, Sheet, PhoneCall, Upload, PlugZap, RotateCcw, Webhook, BellRing,
+  CheckCircle2, AlertTriangle, Copy, ExternalLink, Globe, RefreshCw, Sheet, Upload, PlugZap, RotateCcw, Webhook, BellRing,
 } from 'lucide-react';
 import { LeadAlertsPanel } from './LeadAlerts';
 import { api, errMsg, Paged } from '../../lib/api';
@@ -303,40 +303,7 @@ function Errors() {
   );
 }
 
-function Telephony() {
-  const { data } = useQuery({ queryKey: ['telephony'], queryFn: () => api.get<{ provider: string; configured: boolean; callerId: string | null; webhookUrl: string; publicUrlIsLocal: boolean }>('/integrations/telephony') });
-  if (!data) return <Spinner />;
-  return (
-    <div className="space-y-4 p-5 text-sm">
-      <div className="flex items-center gap-2">
-        <span className="font-medium">Active provider:</span>
-        <Badge className={data.provider === 'mock' ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}>{data.provider === 'mock' ? 'Simulator (no real calls)' : 'Exotel'}</Badge>
-        {data.provider !== 'mock' && (data.configured ? <Badge className="bg-green-100 text-green-800">configured</Badge> : <Badge className="bg-rose-100 text-rose-800">missing credentials</Badge>)}
-      </div>
-      {data.provider === 'mock' ? (
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p>The simulator lets you try the full call flow: ringing, connected or no answer, duration and a sample recording, without placing real calls.</p>
-          <p className="mt-2 font-medium">To make real recorded calls with Exotel:</p>
-          <ol className="mt-1 list-decimal space-y-1 pl-5 text-slate-700">
-            <li>Create an Exotel account and buy an ExoPhone (virtual number). Enable call recording.</li>
-            <li>In the server <code>.env</code> set <code>TELEPHONY_PROVIDER=exotel</code>, <code>EXOTEL_SID</code>, <code>EXOTEL_API_KEY</code>, <code>EXOTEL_API_TOKEN</code>, <code>EXOTEL_CALLER_ID</code> and <code>EXOTEL_SUBDOMAIN</code>.</li>
-            <li>Set <code>PUBLIC_API_URL</code> to the public HTTPS address of the API so Exotel can post call results back.</li>
-            <li>Make sure every employee has their phone number set (Users page or their profile).</li>
-          </ol>
-        </div>
-      ) : (
-        <dl className="grid grid-cols-3 gap-y-2">
-          <dt className="text-slate-500">Caller ID</dt><dd className="col-span-2">{data.callerId ?? '—'}</dd>
-          <dt className="text-slate-500">Status callback</dt><dd className="col-span-2 font-mono text-xs">{data.webhookUrl}</dd>
-        </dl>
-      )}
-      {data.publicUrlIsLocal && data.provider !== 'mock' && <p className="text-amber-700">PUBLIC_API_URL points to localhost, so the provider can't reach it. Call results won't arrive until it's a public URL.</p>}
-      <p className="text-xs text-slate-500">Before recording calls, make sure customers are notified (e.g. an IVR announcement) and agree a retention period, as required by Indian telecom and privacy rules.</p>
-    </div>
-  );
-}
-
-type Tab = 'website' | 'meta' | 'webhook' | 'alerts' | 'runs' | 'errors' | 'telephony';
+type Tab = 'website' | 'meta' | 'webhook' | 'alerts' | 'runs' | 'errors';
 
 export default function AdminIntegrations() {
   const { can } = useAuth();
@@ -371,7 +338,6 @@ export default function AdminIntegrations() {
             ...(manage ? [{ value: 'webhook' as const, label: <span className="flex items-center gap-1"><Webhook className="h-3.5 w-3.5" />Lead webhook</span> }] : []),
             ...(manage ? [{ value: 'alerts' as const, label: <span className="flex items-center gap-1"><BellRing className="h-3.5 w-3.5" />Lead alerts</span> }] : []),
             { value: 'runs', label: 'Sync history' }, { value: 'errors', label: 'Rejected rows', count: errors },
-            ...(manage ? [{ value: 'telephony' as const, label: <span className="flex items-center gap-1"><PhoneCall className="h-3.5 w-3.5" />Telephony</span> }] : []),
           ]} />
         </div>
         {current && <SheetConnection key={current.key} s={current} manage={manage} />}
@@ -379,7 +345,6 @@ export default function AdminIntegrations() {
         {tab === 'alerts' && <div className="p-4"><LeadAlertsPanel /></div>}
         {tab === 'runs' && <Runs />}
         {tab === 'errors' && <Errors />}
-        {tab === 'telephony' && <Telephony />}
       </Card>
     </div>
   );

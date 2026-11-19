@@ -12,7 +12,7 @@ import { PRIORITY } from '../lib/format';
 
 interface Counts {
   tasksAssigned: number; tasksCompleted: number; onTime: number; late: number; overdueOpen: number;
-  callsMade: number; followUpsCompleted: number; leadsConverted: number; clientWorkDone: number; seoUpdates: number; mediaDone: number;
+  followUpsCompleted: number; leadsConverted: number; clientWorkDone: number; seoUpdates: number; mediaDone: number;
 }
 interface Person extends Counts { userId: string; name: string; teams: string[]; avgDaysToComplete: number | null }
 interface Team extends Counts { name: string; members: string[] }
@@ -35,7 +35,6 @@ const COLS: { key: keyof Counts; label: string; tip?: string }[] = [
   { key: 'onTime', label: 'On time' },
   { key: 'late', label: 'Late' },
   { key: 'overdueOpen', label: 'Overdue', tip: 'Due by the end of the month and not finished by then' },
-  { key: 'callsMade', label: 'Calls' },
   { key: 'followUpsCompleted', label: 'Follow-ups' },
   { key: 'leadsConverted', label: 'Converted' },
   { key: 'clientWorkDone', label: 'Client work' },
@@ -89,7 +88,7 @@ function MonthlyReports() {
           <StatCard label="Tasks assigned" value={r.summary.tasksAssigned} />
           <StatCard label="Tasks completed" value={r.summary.tasksCompleted} tone="good" />
           <StatCard label="On time" value={pct(r.summary.onTimeRate)} sub={`${r.summary.onTime} on time · ${r.summary.late} late`} tone={r.summary.late ? 'warn' : 'default'} />
-          <StatCard label="Calls made" value={r.summary.callsMade} />
+          <StatCard label="Follow-ups done" value={r.summary.followUpsCompleted} />
           <StatCard label="Leads converted" value={r.summary.leadsConverted} />
           <StatCard label="Client work done" value={r.summary.clientWorkDone} sub={`${r.summary.seoUpdates} SEO updates · ${r.summary.mediaDone} media`} />
         </div>

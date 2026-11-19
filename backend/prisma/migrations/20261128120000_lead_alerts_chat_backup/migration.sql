@@ -39,3 +39,9 @@ INSERT INTO "role_permissions" ("roleId", "permissionId")
 SELECT r."id", p."id" FROM "roles" r, "permissions" p
 WHERE r."key" = 'super_admin' AND p."key" = 'chat.backup.view'
 ON CONFLICT DO NOTHING;
+
+-- Calling has been removed from the CRM. Its permissions go (role and per-user links cascade).
+-- Past call records and recordings are kept in call_logs; nothing reads them any more.
+DELETE FROM "permissions" WHERE "key" IN ('calls.view.all', 'calls.view.team', 'calls.recordings.all', 'calls.recordings.team');
+UPDATE "permissions" SET "description" = 'Configure Google Sheets, the lead webhook and lead alerts' WHERE "key" = 'integrations.manage';
+UPDATE "roles" SET "description" = replace("description", 'Google Sheets and telephony setup', 'Google Sheets and lead webhook setup') WHERE "description" LIKE '%telephony%';

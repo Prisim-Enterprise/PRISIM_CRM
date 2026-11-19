@@ -12,7 +12,6 @@ import { NotificationsModule } from './notifications/notifications';
 import { UsersModule } from './users/users';
 import { LeadsModule } from './leads/leads.controller';
 import { FollowUpsModule } from './follow-ups/follow-ups';
-import { CallsModule } from './calls/calls';
 import { TasksModule } from './tasks/tasks';
 import { FeedbackModule } from './feedback/feedback';
 import { ReportsModule } from './reports/reports';
@@ -60,7 +59,6 @@ class HealthController {
     UsersModule,
     LeadsModule,
     FollowUpsModule,
-    CallsModule,
     TasksModule,
     FeedbackModule,
     ReportsModule,

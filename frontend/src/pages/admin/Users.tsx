@@ -44,7 +44,7 @@ function UserModal({ user, onClose }: { user: UserRow | 'new'; onClose: () => vo
       <Field label="Full name"><Input value={f.fullName} onChange={(e) => setF({ ...f, fullName: e.target.value })} /></Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Email (login)"><Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
-        <Field label="Phone" hint="Used for click-to-call"><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
+        <Field label="Phone"><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
       </div>
       <div role="group" aria-labelledby="user-teams">
         <p id="user-teams" className="mb-1 block text-sm font-medium text-slate-700">Teams</p>
@@ -109,7 +109,7 @@ function TeamModal({ team, onClose }: { team: Team | 'new'; onClose: () => void 
     <Modal open onClose={onClose} title={isNew ? 'New team' : 'Edit team'}
       footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={m.isPending} disabled={name.length < 2} onClick={() => m.mutate()}>Save</Button></>}>
       <Field label="Team name"><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
-      <Field label="Team leader" hint="Leaders see and manage their team's leads, calls, follow-ups and tasks (per the Team Leader role).">
+      <Field label="Team leader" hint="Leaders see and manage their team's leads, follow-ups and tasks (per the Team Leader role).">
         <Select value={leaderId} onChange={(e) => setLeaderId(e.target.value)}>
           <option value="">None</option>
           {dir.data?.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
@@ -138,7 +138,7 @@ export default function AdminUsers() {
     catch (e) { toast.error(errMsg(e)); }
   };
   const remove = async (u: UserRow) => {
-    const ok = confirm(`Delete ${u.fullName}?\n\nThey lose all access and their sign-in is removed. Their open leads go to Unassigned, open tasks lose their assignee and pending follow-ups are cancelled. Past calls and records keep their name.\n\nThis cannot be undone.`);
+    const ok = confirm(`Delete ${u.fullName}?\n\nThey lose all access and their sign-in is removed. Their open leads go to Unassigned, open tasks lose their assignee and pending follow-ups are cancelled. Past records keep their name.\n\nThis cannot be undone.`);
     if (!ok) return;
     try {
       const r = await api.del<{ released: { leads: number; followUps: number; tasks: number } }>(`/users/${u.id}`);

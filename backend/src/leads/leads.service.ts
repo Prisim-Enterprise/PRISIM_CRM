@@ -77,7 +77,7 @@ export class LeadsService {
     });
   }
 
-  /** Forward-only automatic status change triggered by activity (calls, follow-ups). */
+  /** Forward-only automatic status change triggered by activity (follow-ups). */
   async advance(tx: Tx, leadId: string, suggested: LeadStatus, actorId: string | null, reason: string) {
     const lead = await tx.lead.findUniqueOrThrow({ where: { id: leadId }, select: { id: true, status: true } });
     const next = autoAdvance(lead.status, suggested);
@@ -139,17 +139,15 @@ export class LeadsService {
           assignedUser: ownerSelect,
           source: { select: { key: true, name: true } },
           followUps: { where: { status: 'PENDING' }, orderBy: { dueAt: 'asc' }, take: 1, select: { id: true, dueAt: true } },
-          _count: { select: { calls: true } },
         },
       }),
       this.prisma.lead.count({ where }),
     ]);
     return paged(
-      items.map(({ followUps, _count, ...l }) => ({
+      items.map(({ followUps, ...l }) => ({
         ...l,
         nextFollowUpAt: followUps[0]?.dueAt ?? null,
         followUpOverdue: !!followUps[0] && followUps[0].dueAt < now,
-        callCount: _count.calls,
       })),
       total, q,
     );
@@ -182,34 +180,22 @@ export class LeadsService {
     return { ...lead, permissions: { canEdit, canAssign } };
   }
 
-  /** Unified activity timeline: status changes, assignments, notes, calls and follow-ups. */
+  /** Unified activity timeline: status changes, assignments, notes and follow-ups. */
   async timeline(user: AuthUser, id: string) {
     const lead = await this.prisma.lead.findUnique({ where: { id }, select: { id: true, assignedUserId: true } });
     if (!lead) throw new NotFoundException('Lead not found');
     await this.assertCanView(user, lead);
     const actor = { select: { id: true, fullName: true } };
-    const [statuses, assignments, notes, calls, followUps] = await Promise.all([
+    const [statuses, assignments, notes, followUps] = await Promise.all([
       this.prisma.leadStatusHistory.findMany({ where: { leadId: id }, include: { actor } }),
       this.prisma.leadAssignment.findMany({ where: { leadId: id }, include: { user: actor, assignedBy: actor } }),
       this.prisma.leadNote.findMany({ where: { leadId: id }, include: { author: actor } }),
-      this.prisma.callLog.findMany({ where: { leadId: id }, include: { user: actor } }),
       this.prisma.followUp.findMany({ where: { leadId: id }, include: { owner: actor, createdBy: actor } }),
     ]);
-    const recordingScope = await this.access.userIdsInScope(user, 'calls.recordings');
-    const canPlay = (ownerId: string) => recordingScope === null || recordingScope.includes(ownerId);
-
     const events = [
       ...statuses.map((s) => ({ type: 'status', at: s.createdAt, actor: s.actor, data: { from: s.fromStatus, to: s.toStatus, reason: s.reason } })),
       ...assignments.map((a) => ({ type: 'assignment', at: a.assignedAt, actor: a.assignedBy, data: { to: a.user, method: a.method, reason: a.reason } })),
       ...notes.map((n) => ({ type: 'note', at: n.createdAt, actor: n.author, data: { id: n.id, body: n.body } })),
-      ...calls.map((c) => ({
-        type: 'call', at: c.startedAt ?? c.createdAt, actor: c.user,
-        data: {
-          id: c.id, direction: c.direction, status: c.status, outcome: c.outcome, notes: c.notes, provider: c.provider,
-          durationSeconds: c.durationSeconds, fromNumber: c.fromNumber, toNumber: c.toNumber,
-          hasRecording: !!(c.recordingKey || c.recordingUrl), canPlayRecording: canPlay(c.userId),
-        },
-      })),
       ...followUps.map((f) => ({
         type: 'follow_up', at: f.createdAt, actor: f.createdBy,
         data: { id: f.id, dueAt: f.dueAt, status: f.status, outcome: f.outcome, note: f.note, owner: f.owner, followUpType: f.type, completedAt: f.completedAt },

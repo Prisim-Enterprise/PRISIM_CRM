@@ -12,7 +12,7 @@ function Shell({ children }: { children: ReactNode }) {
         <div className="mb-6 flex flex-col items-center">
           <img src="/prisim-logo-dark.png" alt="Prisim" className="mb-2 h-14 w-auto" />
           <h1 className="text-lg font-semibold tracking-[0.3em] text-slate-900">CRM</h1>
-          <p className="text-sm text-slate-600">Leads, follow-ups, calls, tasks and feedback in one place</p>
+          <p className="text-sm text-slate-600">Leads, follow-ups, tasks and feedback in one place</p>
         </div>
         <div className="w-full space-y-4 rounded-2xl bg-surface p-6 shadow-2xl">{children}</div>
       </div>

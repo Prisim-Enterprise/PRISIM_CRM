@@ -126,22 +126,6 @@ async function seedDemo() {
     await prisma.leadAssignment.create({ data: { leadId: lead.id, userId: owner.id, assignedById: manager.id, method: 'round_robin', assignedAt } });
     await prisma.leadStatusHistory.create({ data: { leadId: lead.id, fromStatus: 'UNASSIGNED', toStatus: 'ASSIGNED', actorId: manager.id, reason: 'Lead assigned', createdAt: assignedAt } });
 
-    const calls = status === 'ASSIGNED' ? 0 : 1 + Math.floor(Math.random() * 3);
-    for (let c = 0; c < calls; c++) {
-      const at = new Date(assignedAt.getTime() + (c + 1) * (6 + Math.random() * 30) * 3600_000);
-      if (at > new Date()) break;
-      const connected = c === calls - 1 && status !== 'CONTACT_ATTEMPTED';
-      const outcome = connected ? (status === 'INTERESTED' ? 'INTERESTED' : status === 'LOST' ? 'NOT_INTERESTED' : status === 'FOLLOW_UP_REQUIRED' ? 'CALLBACK' : 'CONNECTED') : pick(['NO_ANSWER', 'BUSY', 'SWITCHED_OFF']);
-      const dur = connected ? 45 + Math.floor(Math.random() * 400) : 0;
-      await prisma.callLog.create({
-        data: {
-          leadId: lead.id, userId: owner.id, provider: 'manual', direction: 'OUTBOUND', fromNumber: owner.phone, toNumber: lead.phoneE164,
-          status: connected ? 'COMPLETED' : 'NO_ANSWER', startedAt: at, endedAt: new Date(at.getTime() + dur * 1000), durationSeconds: dur,
-          outcome, notes: connected ? pick(['Discussed pricing, wants brochure on WhatsApp.', 'Asked to call back after salary credit.', 'Comparing with two other builders.', 'Wants site visit this weekend.']) : null,
-          createdAt: at,
-        },
-      });
-    }
     if (['FOLLOW_UP_REQUIRED', 'INTERESTED', 'CONTACTED'].includes(status)) {
       const due = hoursFromNow(-30 + Math.floor(Math.random() * 100));
       await prisma.followUp.create({

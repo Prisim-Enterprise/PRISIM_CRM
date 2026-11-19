@@ -4,13 +4,13 @@ import { toast } from 'sonner';
 import { api, errMsg } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { sharesTeam, useDirectory } from '../lib/hooks';
-import { CALL_OUTCOMES, FOLLOW_UP_TYPES, LEAD_STATUS, toLocalInput } from '../lib/format';
+import { FOLLOW_UP_TYPES, LEAD_STATUS, toLocalInput } from '../lib/format';
 import { Button, ErrorBox, Field, Input, Modal, Select, Textarea } from './ui';
 
 function useInvalidateLead() {
   const qc = useQueryClient();
   return () => {
-    for (const k of ['leads', 'lead', 'timeline', 'follow-ups', 'fu-summary', 'calls', 'dashboard', 'notifications']) qc.invalidateQueries({ queryKey: [k] });
+    for (const k of ['leads', 'lead', 'timeline', 'follow-ups', 'fu-summary', 'dashboard', 'notifications']) qc.invalidateQueries({ queryKey: [k] });
   };
 }
 
@@ -82,89 +82,7 @@ export function AssignModal({ open, onClose, leadIds, onDone }: { open: boolean;
   );
 }
 
-function NextFollowUpFields({ enabled, setEnabled, dueAt, setDueAt, type, setType, note, setNote, label = 'Schedule next follow-up' }: {
-  enabled: boolean; setEnabled: (v: boolean) => void; dueAt: string; setDueAt: (v: string) => void; type: string; setType: (v: string) => void;
-  note: string; setNote: (v: string) => void; label?: string;
-}) {
-  return (
-    <div className="rounded-lg border border-slate-200 p-3">
-      <label className="flex items-center gap-2 text-sm font-medium">
-        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> {label}
-      </label>
-      {enabled && (
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <Field label="When"><Input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} /></Field>
-          <Field label="Type">
-            <Select value={type} onChange={(e) => setType(e.target.value)}>
-              {Object.entries(FOLLOW_UP_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </Select>
-          </Field>
-          <Field label="What to do" className="col-span-2"><Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Share brochure, confirm site visit" /></Field>
-        </div>
-      )}
-    </div>
-  );
-}
-
 const tomorrow10 = () => { const d = new Date(Date.now() + 86400e3); d.setHours(10, 0, 0, 0); return toLocalInput(d); };
-
-/** Manual call log, or disposition for a provider call (callId set). */
-export function LogCallModal({ open, onClose, leadId, callId }: { open: boolean; onClose: () => void; leadId: string; callId?: string }) {
-  const [outcome, setOutcome] = useState('CONNECTED');
-  const [direction, setDirection] = useState('OUTBOUND');
-  const [minutes, setMinutes] = useState('');
-  const [notes, setNotes] = useState('');
-  const [next, setNext] = useState(true);
-  const [dueAt, setDueAt] = useState(tomorrow10());
-  const [type, setType] = useState('call');
-  const [fuNote, setFuNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<unknown>(null);
-  const invalidate = useInvalidateLead();
-
-  const submit = async () => {
-    setBusy(true); setErr(null);
-    const nextFollowUp = next ? { dueAt: new Date(dueAt).toISOString(), type, note: fuNote || undefined } : undefined;
-    try {
-      if (callId) await api.patch(`/calls/${callId}/disposition`, { outcome, notes: notes || undefined, nextFollowUp });
-      else {
-        await api.post('/calls', {
-          leadId, outcome, direction, notes: notes || undefined, nextFollowUp,
-          durationSeconds: minutes ? Math.round(Number(minutes) * 60) : undefined,
-        });
-      }
-      toast.success('Call saved');
-      invalidate(); onClose();
-    } catch (e) { setErr(e); } finally { setBusy(false); }
-  };
-
-  return (
-    <Modal open={open} onClose={onClose} title={callId ? 'How did the call go?' : 'Log a call'} wide
-      footer={<><Button variant="secondary" onClick={onClose}>Cancel</Button><Button loading={busy} onClick={submit}>Save call</Button></>}>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Outcome">
-          <Select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
-            {Object.entries(CALL_OUTCOMES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </Select>
-        </Field>
-        {!callId && (
-          <>
-            <Field label="Direction">
-              <Select value={direction} onChange={(e) => setDirection(e.target.value)}>
-                <option value="OUTBOUND">I called the customer</option>
-                <option value="INBOUND">Customer called me</option>
-              </Select>
-            </Field>
-            <Field label="Duration (minutes)"><Input type="number" min="0" step="0.5" value={minutes} onChange={(e) => setMinutes(e.target.value)} placeholder="optional" /></Field>
-          </>
-        )}
-      </div>
-      <Field label="Conversation notes"><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="What did the customer say? Requirements, objections, budget…" /></Field>
-      <NextFollowUpFields enabled={next} setEnabled={setNext} dueAt={dueAt} setDueAt={setDueAt} type={type} setType={setType} note={fuNote} setNote={setFuNote} />
-      <ErrorBox error={err} />
-    </Modal>
-  );
-}
 
 export function FollowUpModal({ open, onClose, leadId }: { open: boolean; onClose: () => void; leadId: string }) {
   const [dueAt, setDueAt] = useState(tomorrow10());

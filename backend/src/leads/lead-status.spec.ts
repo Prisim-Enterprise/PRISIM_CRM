@@ -1,4 +1,4 @@
-import { autoAdvance, statusForCallOutcome, validateManualTransition } from './lead-status';
+import { autoAdvance, validateManualTransition } from './lead-status';
 
 describe('lead status rules', () => {
   it('only moves forward automatically', () => {
@@ -22,11 +22,5 @@ describe('lead status rules', () => {
   it('blocks system-managed statuses and closed-to-closed moves', () => {
     expect(validateManualTransition('CONTACTED', 'ASSIGNED')).toMatch(/automatically/);
     expect(validateManualTransition('LOST', 'CONVERTED', 'x')).toMatch(/Reopen/);
-  });
-
-  it('maps call outcomes to statuses', () => {
-    expect(statusForCallOutcome('NO_ANSWER')).toBe('CONTACT_ATTEMPTED');
-    expect(statusForCallOutcome('INTERESTED')).toBe('INTERESTED');
-    expect(statusForCallOutcome('CALLBACK')).toBe('FOLLOW_UP_REQUIRED');
   });
 });
