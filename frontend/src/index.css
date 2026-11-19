@@ -62,17 +62,21 @@ body { @apply bg-slate-50 text-slate-800 antialiased; letter-spacing: -0.01em; }
 .recharts-cartesian-axis-tick-value { fill: var(--color-slate-500); }
 .recharts-legend-item-text { color: var(--color-slate-600) !important; }
 
-/* Quotations and invoices print on their own: only the sheet, on A4, with its colours. */
+/* Quotations, invoices and payslips print on their own: only the sheet, on A4, with its colours. */
 @media print {
   @page { size: A4; margin: 8mm; }
-  html:has(#quotation-sheet), body:has(#quotation-sheet), html:has(#invoice-sheet), body:has(#invoice-sheet) { background: #fff !important; }
-  body:has(#quotation-sheet) *, body:has(#invoice-sheet) * { visibility: hidden; }
+  html:has(#quotation-sheet), body:has(#quotation-sheet), html:has(#invoice-sheet), body:has(#invoice-sheet), html:has(#payslip-sheet), body:has(#payslip-sheet) { background: #fff !important; }
+  body:has(#quotation-sheet) *, body:has(#invoice-sheet) *, body:has(#payslip-sheet) * { visibility: hidden; }
   body:has(#quotation-sheet) #quotation-sheet,
   body:has(#quotation-sheet) #quotation-sheet *,
   body:has(#invoice-sheet) #invoice-sheet,
-  body:has(#invoice-sheet) #invoice-sheet * { visibility: visible; }
-  body:has(#quotation-sheet) #quotation-sheet, body:has(#invoice-sheet) #invoice-sheet { position: absolute; left: 0; top: 0; width: 100%; }
-  #quotation-sheet, #quotation-sheet *, #invoice-sheet, #invoice-sheet * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body:has(#invoice-sheet) #invoice-sheet *,
+  body:has(#payslip-sheet) #payslip-sheet,
+  body:has(#payslip-sheet) #payslip-sheet * { visibility: visible; }
+  body:has(#quotation-sheet) #quotation-sheet, body:has(#invoice-sheet) #invoice-sheet, body:has(#payslip-sheet) #payslip-sheet { position: absolute; left: 0; top: 0; width: 100%; }
+  #quotation-sheet, #quotation-sheet *, #invoice-sheet, #invoice-sheet *, #payslip-sheet, #payslip-sheet * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   /* Invoices print as one or both copies (original, duplicate); each copy starts on a new page. */
   #invoice-sheet .invoice-copy { break-inside: avoid; }
+  /* One payslip per page. */
+  #payslip-sheet .payslip-page { break-inside: avoid; }
 }

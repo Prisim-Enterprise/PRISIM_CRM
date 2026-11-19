@@ -6,6 +6,7 @@ import {
   LayoutDashboard, Users, CalendarClock, KanbanSquare, MessageSquareText, Shield, Plug, ScrollText,
   Bell, BellRing, LogOut, Menu, UserCog, Volume2, VolumeX, X, Archive,
   Building2, Clapperboard, TrendingUp, MessagesSquare, BarChart3, Calculator, ChevronDown, FileText,
+  ReceiptText,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -125,6 +126,7 @@ export const ACCOUNTING_SECTIONS: { path: string; label: string; to?: string; pe
   { path: 'client-analysis', label: 'Client analysis' },
   { path: 'quotations', label: 'Quotations', to: '/quotations', perm: 'quotations.manage' }, // The CRM's own, shared quotations
   { path: 'invoices', label: 'Invoices' },
+  { path: 'payroll', label: 'Payroll', perm: 'accounting.payroll.manage' },
   { path: 'categories', label: 'Categories & Budgets' },
   { path: 'reports', label: 'Reports' },
   { path: 'approvals', label: 'Approvals' },
@@ -134,8 +136,9 @@ export const ACCOUNTING_SECTIONS: { path: string; label: string; to?: string; pe
 function AccountingMenu({ onNavigate }: { onNavigate: () => void }) {
   const { can } = useAuth();
   const full = can('accounting.manage');
-  // Full access sees every section; "submit expenses" alone sees Expenses.
-  const sections = ACCOUNTING_SECTIONS.filter((s) => (full ? !s.perm || s.perm !== 'quotations.manage' || can('quotations.manage') : s.perm === 'accounting.expenses.submit'));
+  // Full access sees every section (Expenses included); otherwise only the sections their own permission opens.
+  // Quotations and Payroll always need their own permission.
+  const sections = ACCOUNTING_SECTIONS.filter((s) => (s.perm && s.perm !== 'accounting.expenses.submit' ? can(s.perm) : full || (s.perm === 'accounting.expenses.submit' && can(s.perm))));
   const loc = useLocation();
   const inside = loc.pathname.startsWith('/accounting');
   const [open, setOpen] = useState(inside);
@@ -165,6 +168,8 @@ export default function Layout() {
   const { me, can, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const micUnread = useQuery({ queryKey: ['mic-unread'], queryFn: () => api.get<{ count: number }>('/messages/unread'), refetchInterval: 20_000, refetchIntervalInBackground: true });
+  // Shown to anyone with at least one finalised payslip.
+  const myPayslips = useQuery({ queryKey: ['my-payslips'], queryFn: () => api.get<unknown[]>('/payroll/me/payslips'), staleTime: 5 * 60_000 });
 
   const main = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -178,6 +183,7 @@ export default function Layout() {
     ...(can('reports.view.all') ? [{ to: '/reports', label: 'Reports', icon: BarChart3 }] : []),
     ...(can('quotations.manage') ? [{ to: '/quotations', label: 'Quotations', icon: FileText }] : []),
     { to: '/feedback', label: 'Feedback & Queries', icon: MessageSquareText },
+    ...(myPayslips.data?.length ? [{ to: '/payslips', label: 'My payslips', icon: ReceiptText }] : []),
   ];
   const admin = [
     can('users.view', 'users.manage', 'teams.manage') && { to: '/admin/users', label: 'Users & Teams', icon: UserCog },
@@ -209,7 +215,7 @@ export default function Layout() {
       </NavLink>
       <nav className="scroll-thin flex-1 space-y-1 overflow-y-auto px-3">
         {main.map(link)}
-        {can('accounting.manage', 'accounting.expenses.submit') && <AccountingMenu onNavigate={() => setMobileOpen(false)} />}
+        {can('accounting.manage', 'accounting.expenses.submit', 'accounting.payroll.manage') && <AccountingMenu onNavigate={() => setMobileOpen(false)} />}
         {admin.length > 0 && <p className="px-3 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Administration</p>}
         {admin.map(link)}
       </nav>

@@ -42,6 +42,7 @@ export const PERMISSIONS = {
   // Accounting
   'accounting.manage': ['Accounting', 'Full accounting: every section, approve expenses, invoices and settings'],
   'accounting.expenses.submit': ['Accounting', 'Submit own expenses for approval'],
+  'accounting.payroll.manage': ['Accounting', 'Payroll: employees, salaries, monthly payroll runs and payslips'],
   // Team chat
   'chat.backup.view': ['Team chat', 'Read the full chat backup: every conversation, kept after the weekly reset'],
   // Reports

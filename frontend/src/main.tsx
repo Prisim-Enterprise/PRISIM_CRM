@@ -30,6 +30,7 @@ import AccountingCategories from './pages/accounting/Categories';
 import AccountingReports from './pages/accounting/Reports';
 import AccountingClientAnalysis, { ClientAnalysisDetailPage as AccountingClientAnalysisDetail } from './pages/accounting/ClientAnalysis';
 import AccountingSettings from './pages/accounting/Settings';
+import AccountingPayroll, { MyPayslip, MyPayslips, PayrollPayslipPage, PayrollRunPage, PayrollRunPayslipsPage } from './pages/accounting/Payroll';
 import Quotations, { QuotationEditor } from './pages/Quotations';
 import Profile from './pages/Profile';
 import AdminUsers from './pages/admin/Users';
@@ -83,6 +84,10 @@ function App() {
         <Route path="accounting/client-analysis" element={<AccountingClientAnalysis />} />
         <Route path="accounting/client-analysis/:id" element={<AccountingClientAnalysisDetail />} />
         <Route path="accounting/settings" element={<AccountingSettings />} />
+        <Route path="accounting/payroll" element={<AccountingPayroll />} />
+        <Route path="accounting/payroll/runs/:id" element={<PayrollRunPage />} />
+        <Route path="accounting/payroll/runs/:id/payslips" element={<PayrollRunPayslipsPage />} />
+        <Route path="accounting/payroll/payslips/:id" element={<PayrollPayslipPage />} />
         <Route path="accounting/quotations" element={<Navigate to="/quotations" replace />} />
         <Route path="accounting/*" element={<Navigate to="/accounting/dashboard" replace />} />
         <Route path="quotations" element={<Quotations />} />
@@ -91,6 +96,8 @@ function App() {
         <Route path="feedback" element={<Feedback />} />
         <Route path="feedback/:id" element={<FeedbackDetail />} />
         <Route path="profile" element={<Profile />} />
+        <Route path="payslips" element={<MyPayslips />} />
+        <Route path="payslips/:id" element={<MyPayslip />} />
         <Route path="admin/users" element={<AdminUsers />} />
         <Route path="admin/roles" element={<AdminRoles />} />
         <Route path="admin/integrations" element={<AdminIntegrations />} />

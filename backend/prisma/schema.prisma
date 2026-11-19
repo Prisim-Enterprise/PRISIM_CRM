@@ -74,6 +74,7 @@ model User {
   seoAccountsCreated    SeoAccount[]
   seoAssignments        SeoAssignee[]
   seoUpdates            SeoUpdate[]
+  payrollProfile        PayrollEmployee?
 
   @@index([teamId])
   @@map("users")
@@ -606,28 +607,28 @@ enum ClientWorkStatus {
 }
 
 model Client {
-  id             String          @id @default(uuid()) @db.Uuid
-  name           String
-  company        String?
-  contactName    String?
-  email          String?
-  phone          String?
-  notes          String?
-  status         ClientStatus    @default(ACTIVE)
-  createdById    String          @db.Uuid
-  createdBy      User            @relation("ClientCreator", fields: [createdById], references: [id])
-  works          ClientWork[]
-  mediaItems     MediaItem[]
-  postingPeriods PostingPeriod[]
-  tasks          TaskClient[]
-  quotations     Quotation[]
-  acctProjects   AcctProject[]
-  acctInvoices   AcctInvoice[]
+  id               String            @id @default(uuid()) @db.Uuid
+  name             String
+  company          String?
+  contactName      String?
+  email            String?
+  phone            String?
+  notes            String?
+  status           ClientStatus      @default(ACTIVE)
+  createdById      String            @db.Uuid
+  createdBy        User              @relation("ClientCreator", fields: [createdById], references: [id])
+  works            ClientWork[]
+  mediaItems       MediaItem[]
+  postingPeriods   PostingPeriod[]
+  tasks            TaskClient[]
+  quotations       Quotation[]
+  acctProjects     AcctProject[]
+  acctInvoices     AcctInvoice[]
   acctInvoiceFiles AcctInvoiceFile[]
-  acctExpenses   AcctExpense[]
-  seoAccounts    SeoAccount[]
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  acctExpenses     AcctExpense[]
+  seoAccounts      SeoAccount[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
 
   @@index([status])
   @@map("clients")
@@ -1245,20 +1246,20 @@ model AcctInvoice {
 }
 
 model AcctInvoiceFile {
-  id           String   @id @default(uuid()) @db.Uuid
-  clientId     String   @db.Uuid
-  client       Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  storageKey   String   @unique
-  fileName     String
-  mimeType     String
+  id            String   @id @default(uuid()) @db.Uuid
+  clientId      String   @db.Uuid
+  client        Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  storageKey    String   @unique
+  fileName      String
+  mimeType      String
   /// Bytes as stored (after compression).
-  sizeBytes    Int
+  sizeBytes     Int
   /// Bytes as uploaded, before server-side compression.
   originalBytes Int
   /// "gzip" when stored gzipped; null when stored as uploaded.
-  encoding     String?
-  uploadedById String   @db.Uuid
-  createdAt    DateTime @default(now())
+  encoding      String?
+  uploadedById  String   @db.Uuid
+  createdAt     DateTime @default(now())
 
   @@index([clientId, createdAt])
   @@map("acct_invoice_files")
@@ -1300,4 +1301,112 @@ model ChatArchive {
   @@index([recipientId, createdAt])
   @@index([senderId, createdAt])
   @@map("chat_archive")
+}
+
+// ───────────────────────── Payroll ─────────────────────────
+
+enum PayrollRunStatus {
+  DRAFT
+  FINALISED
+  PAID
+}
+
+/// PF, ESI, Professional Tax and payslip options: one row (id 1) of JSON.
+model PayrollSetting {
+  id        Int      @id @default(1)
+  data      Json
+  updatedAt DateTime @updatedAt
+
+  @@map("payroll_settings")
+}
+
+/// A person on the payroll, optionally linked to their CRM user (who then sees their own payslips).
+model PayrollEmployee {
+  id            String            @id @default(uuid()) @db.Uuid
+  userId        String?           @unique @db.Uuid
+  user          User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  code          String            @unique
+  fullName      String
+  email         String?
+  phone         String?
+  designation   String?
+  department    String?
+  location      String?
+  dateOfJoining DateTime          @db.Date
+  /// Last working day. Not paid after this, and left out of later runs.
+  dateOfLeaving DateTime?         @db.Date
+  pan           String?
+  uan           String?
+  pfNumber      String?
+  esiNumber     String?
+  bankName      String?
+  accountNumber String?
+  ifsc          String?
+  paymentMethod AcctPaymentMethod @default(BANK_TRANSFER)
+  /// Monthly salary structure: [{ name, amount, pf }]. pf marks the parts that count as PF wages (Basic, DA).
+  components    Json
+  pfEnabled     Boolean           @default(true)
+  /// Work out PF on wages up to the ceiling (₹15,000) rather than on the full PF wages.
+  pfCapped      Boolean           @default(true)
+  esiEnabled    Boolean           @default(true)
+  ptEnabled     Boolean           @default(true)
+  /// Income tax (TDS) taken each month unless a payslip says otherwise.
+  monthlyTds    Decimal           @default(0) @db.Decimal(12, 2)
+  notes         String?
+  payslips      Payslip[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([dateOfLeaving])
+  @@map("payroll_employees")
+}
+
+/// One month's payroll. DRAFT can be edited; FINALISED is locked and visible to employees; PAID is paid out.
+model PayrollRun {
+  id          String           @id @default(uuid()) @db.Uuid
+  /// "2026-11"
+  month       String           @unique
+  status      PayrollRunStatus @default(DRAFT)
+  paidOn      DateTime?        @db.Date
+  /// The salary expense recorded in Accounting when the run was paid.
+  expenseId   String?          @db.Uuid
+  notes       String?
+  createdById String           @db.Uuid
+  finalisedAt DateTime?
+  payslips    Payslip[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@map("payroll_runs")
+}
+
+/// One employee's pay for a run. The employee's details and salary are copied in, so later changes don't alter it.
+model Payslip {
+  id              String          @id @default(uuid()) @db.Uuid
+  runId           String          @db.Uuid
+  run             PayrollRun      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  employeeId      String          @db.Uuid
+  employee        PayrollEmployee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  /// Employee details and salary structure as they were for this run.
+  snapshot        Json
+  lopDays         Decimal         @default(0) @db.Decimal(4, 1)
+  /// One-off earnings this month: [{ name, amount }] (bonus, incentive, arrears).
+  extraEarnings   Json            @default("[]")
+  /// One-off deductions this month: [{ name, amount }] (salary advance, recovery).
+  otherDeductions Json            @default("[]")
+  /// TDS for this month when it differs from the employee's usual amount.
+  tdsOverride     Decimal?        @db.Decimal(12, 2)
+  remarks         String?
+  /// The worked-out payslip: days, earnings, deductions, employer contributions.
+  calc            Json
+  gross           Decimal         @db.Decimal(12, 2)
+  totalDeductions Decimal         @db.Decimal(12, 2)
+  netPay          Decimal         @db.Decimal(12, 2)
+  employerCost    Decimal         @db.Decimal(12, 2)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@unique([runId, employeeId])
+  @@index([employeeId])
+  @@map("payslips")
 }

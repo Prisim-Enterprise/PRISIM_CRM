@@ -24,6 +24,7 @@ import { MessagesModule } from './messages/messages';
 import { PostingModule } from './clients/posting';
 import { QuotationsModule } from './quotations/quotations';
 import { AccountingModule } from './accounting/accounting';
+import { PayrollModule } from './payroll/payroll';
 import { AuthModule } from './auth/auth';
 import { AlertsModule } from './alerts/alerts';
 
@@ -70,6 +71,7 @@ class HealthController {
     PostingModule,
     QuotationsModule,
     AccountingModule,
+    PayrollModule,
     AlertsModule,
     JobsModule,
   ],
