@@ -47,6 +47,8 @@ export const PERMISSIONS = {
   // Accounting
   'accounting.manage': ['Accounting', 'Full accounting: every section, approve expenses, invoices and settings'],
   'accounting.expenses.submit': ['Accounting', 'Submit own expenses for approval'],
+  // Team chat
+  'chat.backup.view': ['Team chat', 'Read the full chat backup: every conversation, kept after the weekly reset'],
   // Reports
   'reports.view.all': ['Reports', 'View organisation-wide reports'],
   'reports.view.team': ['Reports', 'View team reports'],
@@ -74,8 +76,8 @@ export const DEFAULT_ROLES: { key: string; name: string; description: string; pe
     name: 'Admin / Manager',
     description: 'Manages leads, assignment, follow-ups, tasks, feedback and reports.',
     // Sees every client and update; posting client work stays with the Super Admin by default.
-    // Accounting stays with the Super Admin.
-    permissions: ALL_PERMISSIONS.filter((p) => p !== 'roles.manage' && p !== 'clients.manage' && !p.startsWith('accounting.')),
+    // Accounting and the chat backup (everyone's messages) stay with the Super Admin.
+    permissions: ALL_PERMISSIONS.filter((p) => p !== 'roles.manage' && p !== 'clients.manage' && !p.startsWith('accounting.') && p !== 'chat.backup.view'),
   },
   {
     key: 'team_leader',

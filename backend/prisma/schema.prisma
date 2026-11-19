@@ -234,6 +234,10 @@ model Lead {
   duplicateOf     Lead?      @relation("LeadDuplicates", fields: [duplicateOfId], references: [id])
   duplicates      Lead[]     @relation("LeadDuplicates")
   lastContactedAt DateTime?
+  /// Owner was alerted that the lead is untouched (cleared by activity after it).
+  nudgedAt        DateTime?
+  /// Team leader / managers were alerted that the lead is still untouched.
+  escalatedAt     DateTime?
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
@@ -326,6 +330,8 @@ model FollowUp {
   rescheduleCount Int                  @default(0)
   reminderSentAt  DateTime?
   overdueNotified Boolean              @default(false)
+  /// Team leader / managers were alerted that this follow-up is long overdue.
+  escalatedAt     DateTime?
   reschedules     FollowUpReschedule[]
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
@@ -1270,4 +1276,28 @@ model AcctInvoicePayment {
 
   @@index([invoiceId])
   @@map("acct_invoice_payments")
+}
+
+/// Permanent copy of every Team chat message. Team chat itself is cleared weekly; this is not.
+/// No foreign keys on purpose: deleting a person or a message never deletes the archive.
+model ChatArchive {
+  id            String      @id @db.Uuid // the original message id
+  senderId      String      @db.Uuid
+  senderName    String
+  /// null = sent to everyone
+  recipientId   String?     @db.Uuid
+  recipientName String?
+  kind          MessageKind
+  body          String?
+  audioKey      String?
+  audioType     String?
+  durationSec   Int?
+  createdAt     DateTime
+  /// The sender deleted it from Team chat; the archive keeps it.
+  unsentAt      DateTime?
+
+  @@index([createdAt])
+  @@index([recipientId, createdAt])
+  @@index([senderId, createdAt])
+  @@map("chat_archive")
 }

@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser, CurrentUser } from '../common/current-user';
 import { StorageService } from '../common/storage.service';
 import { FileUpload } from '../common/file-upload';
+import { ChatBackupController, ChatBackupService } from './chat-backup';
 
 /** A conversation: "everyone", or the other person's user id. */
 const TO = /^(everyone|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
@@ -63,23 +64,38 @@ export class MessagesService {
     return { ...since, OR: [{ senderId: u.id, recipientId: withKey }, { senderId: withKey, recipientId: u.id }] };
   }
 
-  private async assertPerson(u: AuthUser, id: string) {
+  /** Checks the recipient and returns their name (kept in the chat backup). */
+  private async assertPerson(u: AuthUser, id: string): Promise<string> {
     if (id === u.id) throw new BadRequestException("You can't message yourself");
-    if (!(await this.prisma.user.count({ where: { id, isActive: true, deletedAt: null } }))) throw new BadRequestException('That person is not active in the CRM');
+    const p = await this.prisma.user.findFirst({ where: { id, isActive: true, deletedAt: null }, select: { fullName: true } });
+    if (!p) throw new BadRequestException('That person is not active in the CRM');
+    return p.fullName;
+  }
+
+  /** Sends a message and keeps its permanent copy in the chat backup, together or not at all. */
+  private send(u: AuthUser, to: string, recipientName: string | null, data: Omit<Prisma.MessageUncheckedCreateInput, 'senderId' | 'recipientId'>) {
+    const recipientId = to === 'everyone' ? null : to;
+    return this.prisma.$transaction(async (tx) => {
+      const m = await tx.message.create({ data: { ...data, senderId: u.id, recipientId }, include: { sender: person } });
+      await tx.chatArchive.create({ data: {
+        id: m.id, senderId: u.id, senderName: u.fullName, recipientId, recipientName, kind: m.kind, body: m.body,
+        audioKey: m.audioKey, audioType: m.audioType, durationSec: m.durationSec, createdAt: m.createdAt,
+      } });
+      return m;
+    });
   }
 
   /**
-   * Deletes last week's messages and voice files. Runs from the scheduler and, so the reset
-   * never depends on it, at most every 10 minutes when someone opens Mic.
+   * Clears last week's messages from Team chat. Runs from the scheduler and, so the reset
+   * never depends on it, at most every 10 minutes when someone opens Team chat.
+   * Voice files are kept: the chat backup (chat_archive) still plays them.
    */
   async purge(force = false) {
     if (!force && Date.now() - this.lastPurge < 10 * 60_000) return { deleted: 0 };
     this.lastPurge = Date.now();
     const before = weekStart();
-    const old = await this.prisma.message.findMany({ where: { createdAt: { lt: before } }, select: { audioKey: true } });
-    if (!old.length) return { deleted: 0 };
     const { count } = await this.prisma.message.deleteMany({ where: { createdAt: { lt: before } } });
-    for (const m of old) if (m.audioKey) await this.storage.remove(m.audioKey).catch(() => undefined);
+    if (!count) return { deleted: 0 };
     this.log.log(`Weekly reset: deleted ${count} messages`);
     return { deleted: count };
   }
@@ -161,16 +177,14 @@ export class MessagesService {
   }
 
   async sendText(u: AuthUser, dto: TextDto) {
-    if (dto.to !== 'everyone') await this.assertPerson(u, dto.to);
+    const recipientName = dto.to === 'everyone' ? null : await this.assertPerson(u, dto.to);
     const body = dto.body.trim();
     if (!body) throw new BadRequestException('Type a message first');
-    return this.prisma.message.create({
-      data: { senderId: u.id, recipientId: dto.to === 'everyone' ? null : dto.to, kind: 'TEXT', body }, include: { sender: person },
-    });
+    return this.send(u, dto.to, recipientName, { kind: 'TEXT', body });
   }
 
   async sendVoice(u: AuthUser, q: VoiceParams, file?: Express.Multer.File) {
-    if (q.to !== 'everyone') await this.assertPerson(u, q.to);
+    const recipientName = q.to === 'everyone' ? null : await this.assertPerson(u, q.to);
     if (!file?.size) throw new BadRequestException('No recording received');
     if (file.size > MAX_VOICE_BYTES) throw new BadRequestException('Voice messages can be up to 10 MB');
     const type = file.mimetype.split(';')[0].trim().toLowerCase();
@@ -178,10 +192,7 @@ export class MessagesService {
     const ext = type === 'audio/mp4' || type === 'audio/x-m4a' ? '.m4a' : type === 'audio/mpeg' ? '.mp3' : `.${type.split('/')[1]}`;
     const key = await this.storage.save('voice', file.buffer, `voice${ext}`, type);
     try {
-      return await this.prisma.message.create({
-        data: { senderId: u.id, recipientId: q.to === 'everyone' ? null : q.to, kind: 'VOICE', audioKey: key, audioType: type, durationSec: q.durationSec },
-        include: { sender: person },
-      });
+      return await this.send(u, q.to, recipientName, { kind: 'VOICE', audioKey: key, audioType: type, durationSec: q.durationSec });
     } catch (e) {
       await this.storage.remove(key).catch(() => undefined);
       throw e;
@@ -196,13 +207,15 @@ export class MessagesService {
     return this.storage.send(res, m.audioKey, m.audioType ?? 'audio/webm', range);
   }
 
-  /** Unsend: the sender can delete their own message. */
+  /** Unsend: the sender can delete their own message from Team chat. The backup keeps it, marked as unsent. */
   async remove(u: AuthUser, id: string) {
     const m = await this.prisma.message.findUnique({ where: { id } });
     if (!m) throw new NotFoundException('Message not found');
     if (m.senderId !== u.id) throw new ForbiddenException('You can only delete messages you sent');
-    await this.prisma.message.delete({ where: { id } });
-    if (m.audioKey) await this.storage.remove(m.audioKey).catch(() => undefined);
+    await this.prisma.$transaction([
+      this.prisma.message.delete({ where: { id } }),
+      this.prisma.chatArchive.updateMany({ where: { id }, data: { unsentAt: new Date() } }),
+    ]);
     return { deleted: true };
   }
 }
@@ -240,5 +253,5 @@ export class MessagesController {
   @Delete(':id') remove(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.svc.remove(u, id); }
 }
 
-@Module({ providers: [MessagesService, MessagesReset], controllers: [MessagesController], exports: [MessagesService] })
+@Module({ providers: [MessagesService, MessagesReset, ChatBackupService], controllers: [MessagesController, ChatBackupController], exports: [MessagesService] })
 export class MessagesModule {}

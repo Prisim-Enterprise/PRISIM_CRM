@@ -39,7 +39,7 @@ export default function TeamChat() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Team chat" subtitle={<>Chat and voice messages with anyone, or with everyone at once.{resets && <> Everything is cleared every Monday at 12:00 AM · next clear {formatDistanceToNowStrict(resets, { addSuffix: true })}.</>}</>} />
+      <PageHeader title="Team chat" subtitle={<>Chat and voice messages with anyone, or with everyone at once.{resets && <> Chats are cleared from here every Monday at 12:00 AM (next {formatDistanceToNowStrict(resets, { addSuffix: true })}). The company keeps a backup copy of all messages.</>}</>} />
       <Card className="flex h-[calc(100vh-13rem)] min-h-[460px] overflow-hidden">
         {/* Conversations */}
         <aside className={clsx('flex w-full shrink-0 flex-col border-r border-slate-200 md:w-80', open && 'hidden md:flex')}>

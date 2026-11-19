@@ -12,7 +12,7 @@ import { AuditService } from '../common/audit.service';
 import { AuthUser, CurrentUser } from '../common/current-user';
 import { NotificationsService } from '../notifications/notifications';
 import { PageQuery, paged, skipTake } from '../common/pagination';
-import { localDayRange } from '../common/time';
+import { APP_TZ, localDayRange } from '../common/time';
 import { LeadsModule } from '../leads/leads.controller';
 import { LeadsService } from '../leads/leads.service';
 import { isClosed } from '../leads/lead-status';
@@ -230,21 +230,22 @@ export class FollowUpReminders {
         include: { lead: { select: { id: true, fullName: true } } }, take: 500,
       });
       for (const f of upcoming) {
+        // Claim first, so two runs at once can't both send it.
+        if ((await this.prisma.followUp.updateMany({ where: { id: f.id, reminderSentAt: null }, data: { reminderSentAt: now } })).count !== 1) continue;
         await this.notifications.notify(f.ownerId, {
           type: 'followup.reminder', title: `Follow-up due soon: ${f.lead.fullName}`,
-          body: `${f.type} at ${f.dueAt.toISOString()}`, link: `/leads/${f.lead.id}`,
+          body: `${f.type[0].toUpperCase()}${f.type.slice(1)} at ${f.dueAt.toLocaleTimeString('en-IN', { timeZone: APP_TZ, hour: 'numeric', minute: '2-digit' })}`, link: `/leads/${f.lead.id}`,
         });
-        await this.prisma.followUp.update({ where: { id: f.id }, data: { reminderSentAt: now } });
       }
       const overdue = await this.prisma.followUp.findMany({
         where: { status: 'PENDING', overdueNotified: false, dueAt: { lt: now } },
         include: { lead: { select: { id: true, fullName: true } } }, take: 500,
       });
       for (const f of overdue) {
+        if ((await this.prisma.followUp.updateMany({ where: { id: f.id, overdueNotified: false }, data: { overdueNotified: true } })).count !== 1) continue;
         await this.notifications.notify(f.ownerId, {
           type: 'followup.overdue', title: `Overdue follow-up: ${f.lead.fullName}`, link: `/leads/${f.lead.id}`,
         });
-        await this.prisma.followUp.update({ where: { id: f.id }, data: { overdueNotified: true } });
       }
     } catch (e) {
       this.log.error(`Reminder run failed: ${(e as Error).message}`);

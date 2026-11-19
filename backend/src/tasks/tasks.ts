@@ -441,8 +441,12 @@ export class TaskReminders {
         take: 500,
       });
       for (const t of tasks) {
+        if ((await this.prisma.task.updateMany({ where: { id: t.id, overdueNotified: false }, data: { overdueNotified: true } })).count !== 1) continue;
         await this.notifications.notifyMany(peopleOn(t), { type: 'task.overdue', title: `Overdue task: PRS-${t.number} ${t.title}`, link: `/tasks?open=${t.id}` });
-        await this.prisma.task.update({ where: { id: t.id }, data: { overdueNotified: true } });
+        // Whoever handed the task out hears about it too (unless they are on it themselves).
+        if (t.createdById && !peopleOn(t).includes(t.createdById)) {
+          await this.notifications.notify(t.createdById, { type: 'task.overdue', title: `Not done yet: PRS-${t.number} ${t.title}`, body: 'A task you assigned is past its due date.', link: `/tasks?open=${t.id}` });
+        }
       }
     } catch (e) {
       this.log.error(`Overdue check failed: ${(e as Error).message}`);

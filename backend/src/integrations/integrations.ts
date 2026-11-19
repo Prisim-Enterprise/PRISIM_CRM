@@ -368,24 +368,27 @@ export class LeadSyncService {
     return { runId: run.id, ...counts, rowsRead: rows.length, errors };
   }
 
+  /** Every new lead: assign it if auto-assign is on (the owner is alerted), and always alert the managers. */
   private async afterImport(createdIds: string[], sourceName: string, aa?: SheetsConfig['autoAssign']) {
     if (!createdIds.length) return;
+    let assigned = false;
     if (aa?.enabled && aa.userIds?.length) {
       try {
         const active = await this.prisma.user.findMany({ where: { id: { in: aa.userIds }, isActive: true }, select: { id: true } });
         if (active.length) {
           await this.leads.assign(await this.systemActor(), { leadIds: createdIds, method: aa.method, userIds: active.map((u) => u.id), reason: 'Auto-assigned on import' });
-          return;
+          assigned = true;
         }
       } catch (e) {
         this.log.error(`Auto-assign failed: ${(e as Error).message}`);
       }
     }
+    const one = createdIds.length === 1 ? await this.prisma.lead.findUnique({ where: { id: createdIds[0] }, select: { fullName: true } }) : null;
+    const what = one ? `New ${sourceName} lead: ${one.fullName}` : `${createdIds.length} new ${sourceName} leads`;
     const managers = await this.notifications.usersWithPermission('leads.assign.all');
-    await this.notifications.notifyMany(managers, {
-      type: 'lead.imported', title: `${createdIds.length} new ${sourceName} lead${createdIds.length > 1 ? 's' : ''} waiting for assignment`,
-      link: '/leads?owner=unassigned',
-    });
+    await this.notifications.notifyMany(managers, assigned
+      ? { type: 'lead.new', title: what, body: 'Auto-assigned. The owner has been told.', link: one ? `/leads/${createdIds[0]}` : '/leads' }
+      : { type: 'lead.imported', title: `${what}, waiting for assignment`, link: one ? `/leads/${createdIds[0]}` : '/leads?owner=unassigned' });
   }
 
   async syncSheet(conn: ConnectionKey, trigger: 'schedule' | 'manual' | 'reconcile') {

@@ -2,8 +2,9 @@ import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  CheckCircle2, AlertTriangle, Copy, ExternalLink, Globe, RefreshCw, Sheet, PhoneCall, Upload, PlugZap, RotateCcw, Webhook,
+  CheckCircle2, AlertTriangle, Copy, ExternalLink, Globe, RefreshCw, Sheet, PhoneCall, Upload, PlugZap, RotateCcw, Webhook, BellRing,
 } from 'lucide-react';
+import { LeadAlertsPanel } from './LeadAlerts';
 import { api, errMsg, Paged } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { useDirectory } from '../../lib/hooks';
@@ -335,7 +336,7 @@ function Telephony() {
   );
 }
 
-type Tab = 'website' | 'meta' | 'webhook' | 'runs' | 'errors' | 'telephony';
+type Tab = 'website' | 'meta' | 'webhook' | 'alerts' | 'runs' | 'errors' | 'telephony';
 
 export default function AdminIntegrations() {
   const { can } = useAuth();
@@ -368,12 +369,14 @@ export default function AdminIntegrations() {
             { value: 'website', label: <span className="flex items-center gap-1"><Globe className="h-3.5 w-3.5" />Website leads</span> },
             { value: 'meta', label: <span className="flex items-center gap-1"><Sheet className="h-3.5 w-3.5" />Meta Ads leads</span> },
             ...(manage ? [{ value: 'webhook' as const, label: <span className="flex items-center gap-1"><Webhook className="h-3.5 w-3.5" />Lead webhook</span> }] : []),
+            ...(manage ? [{ value: 'alerts' as const, label: <span className="flex items-center gap-1"><BellRing className="h-3.5 w-3.5" />Lead alerts</span> }] : []),
             { value: 'runs', label: 'Sync history' }, { value: 'errors', label: 'Rejected rows', count: errors },
             ...(manage ? [{ value: 'telephony' as const, label: <span className="flex items-center gap-1"><PhoneCall className="h-3.5 w-3.5" />Telephony</span> }] : []),
           ]} />
         </div>
         {current && <SheetConnection key={current.key} s={current} manage={manage} />}
         {tab === 'webhook' && <WebhookPanel />}
+        {tab === 'alerts' && <div className="p-4"><LeadAlertsPanel /></div>}
         {tab === 'runs' && <Runs />}
         {tab === 'errors' && <Errors />}
         {tab === 'telephony' && <Telephony />}

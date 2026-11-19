@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
   LayoutDashboard, Users, CalendarClock, PhoneCall, KanbanSquare, MessageSquareText, Shield, Plug, ScrollText,
-  Bell, BellRing, LogOut, Menu, UserCog, X,
+  Bell, BellRing, LogOut, Menu, UserCog, Volume2, VolumeX, X, Archive,
   Building2, Clapperboard, TrendingUp, MessagesSquare, BarChart3, Calculator, ChevronDown, FileText,
 } from 'lucide-react';
 import { api } from '../lib/api';
@@ -13,11 +13,15 @@ import { ago } from '../lib/format';
 import { Avatar } from './ui';
 import { ChatPopups } from './ChatPopups';
 import { desktopPermission, notifyDesktop, requestDesktop } from '../lib/desktopNotify';
+import { LOUD_TYPES, playAlertSound, setSoundEnabled, soundEnabled, unlockSoundOnFirstGesture } from '../lib/alertSound';
 
-interface Notification { id: string; title: string; body: string | null; link: string | null; readAt: string | null; createdAt: string }
+unlockSoundOnFirstGesture();
+
+interface Notification { id: string; type: string; title: string; body: string | null; link: string | null; readAt: string | null; createdAt: string }
 
 function NotificationBell() {
   const [open, setOpen] = useState(false);
+  const [sound, setSound] = useState(soundEnabled());
   const ref = useRef<HTMLDivElement>(null);
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -34,11 +38,16 @@ function NotificationBell() {
   useEffect(() => {
     if (!data) return;
     if (!seen.current) { seen.current = new Set(data.items.map((n) => n.id)); return; }
+    let chime = false;
     for (const n of data.items) {
       if (seen.current.has(n.id)) continue;
       seen.current.add(n.id);
-      if (!n.readAt) notifyDesktop(n.title, { body: n.body ?? undefined, tag: `alert-${n.id}`, onClick: () => openItem(n) });
+      if (n.readAt) continue;
+      notifyDesktop(n.title, { body: n.body ?? undefined, tag: `alert-${n.id}`, onClick: () => openItem(n) });
+      if (LOUD_TYPES.has(n.type)) chime = true;
     }
+    // New leads and leads or follow-ups needing action chime, even with the CRM in view.
+    if (chime) playAlertSound();
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
@@ -65,7 +74,13 @@ function NotificationBell() {
         <div className="absolute right-0 z-30 mt-2 w-96 max-w-[90vw] rounded-xl border border-slate-200 bg-surface shadow-xl">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
             <span className="text-sm font-semibold">Notifications</span>
-            {!!data?.unreadCount && <button className="text-xs text-indigo-700 hover:underline" onClick={() => readAll.mutate()}>Mark all read</button>}
+            <span className="flex items-center gap-3">
+              <button className="inline-flex items-center gap-1 text-xs text-slate-600 hover:text-slate-900" title="Chime for new leads and leads or follow-ups needing action"
+                onClick={() => { const on = !sound; setSoundEnabled(on); setSound(on); if (on) playAlertSound(true); }}>
+                {sound ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}{sound ? 'Sound on' : 'Sound off'}
+              </button>
+              {!!data?.unreadCount && <button className="text-xs text-indigo-700 hover:underline" onClick={() => readAll.mutate()}>Mark all read</button>}
+            </span>
           </div>
           <div className="scroll-thin max-h-[60vh] overflow-y-auto">
             {!data?.items.length && <p className="px-4 py-8 text-center text-sm text-slate-500">You're all caught up.</p>}
@@ -170,6 +185,7 @@ export default function Layout() {
     { to: '/admin/roles', label: 'Roles & Permissions', icon: Shield, show: can('roles.manage', 'users.manage') },
     can('integrations.manage', 'leads.import') && { to: '/admin/integrations', label: 'Integrations', icon: Plug },
     can('audit.view') && { to: '/admin/audit', label: 'Audit Log', icon: ScrollText },
+    can('chat.backup.view') && { to: '/admin/chat-backup', label: 'Chat backup', icon: Archive },
   ].filter((x): x is { to: string; label: string; icon: typeof Plug; show?: boolean } => !!x && (x as { show?: boolean }).show !== false);
 
   const link = (i: { to: string; label: string; icon: typeof Plug; end?: boolean; badge?: number }) => (

@@ -7,6 +7,11 @@ import { AuthUser, CurrentUser } from '../common/current-user';
 export class NotificationsService {
   constructor(private prisma: PrismaService) {}
 
+  private pollHooks: (() => Promise<unknown>)[] = [];
+  /** Work to run when someone checks their alerts (the jobs module throttles it to once a minute). */
+  onPoll(fn: () => Promise<unknown>) { this.pollHooks.push(fn); }
+  async polled() { for (const fn of this.pollHooks) await fn().catch(() => undefined); }
+
   async notify(userId: string | null | undefined, n: { type: string; title: string; body?: string; link?: string }) {
     if (!userId) return;
     await this.prisma.notification.create({ data: { userId, ...n } });
@@ -40,10 +45,12 @@ export class NotificationsService {
 @ApiBearerAuth()
 @Controller('notifications')
 export class NotificationsController {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private svc: NotificationsService) {}
 
   @Get()
   async list(@CurrentUser() user: AuthUser, @Query('unread') unread?: string) {
+    // Safety net for the scheduler: reminders and lead alerts still go out while anyone has the CRM open.
+    await this.svc.polled();
     const where = { userId: user.id, ...(unread === 'true' ? { readAt: null } : {}) };
     const [items, unreadCount] = await Promise.all([
       this.prisma.notification.findMany({ where, orderBy: { createdAt: 'desc' }, take: 50 }),

@@ -26,6 +26,7 @@ import { PostingModule } from './clients/posting';
 import { QuotationsModule } from './quotations/quotations';
 import { AccountingModule } from './accounting/accounting';
 import { AuthModule } from './auth/auth';
+import { AlertsModule } from './alerts/alerts';
 
 @Controller('health')
 class HealthController {
@@ -71,6 +72,7 @@ class HealthController {
     PostingModule,
     QuotationsModule,
     AccountingModule,
+    AlertsModule,
     JobsModule,
   ],
   controllers: [HealthController],

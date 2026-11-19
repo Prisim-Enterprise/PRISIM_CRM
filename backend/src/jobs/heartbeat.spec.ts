@@ -3,11 +3,11 @@ import { jobsDue, tickHealth, TICK_STALE_MS } from './heartbeat';
 const at = (iso: string) => new Date(iso);
 
 describe('jobsDue', () => {
-  it('every minute: follow-up reminders and lead sync', () => {
-    expect(jobsDue(at('2026-11-17T10:03:00Z'))).toEqual(['followUps', 'leadSync']);
+  it('every minute: follow-up reminders, lead alerts and lead sync', () => {
+    expect(jobsDue(at('2026-11-17T10:03:00Z'))).toEqual(['followUps', 'leadAlerts', 'leadSync']);
   });
   it('every ten minutes: also overdue tasks, chat purge and the posting calendar', () => {
-    expect(jobsDue(at('2026-11-17T10:20:00Z'))).toEqual(['followUps', 'leadSync', 'overdueTasks', 'purgeMessages', 'postingCalendar']);
+    expect(jobsDue(at('2026-11-17T10:20:00Z'))).toEqual(['followUps', 'leadAlerts', 'leadSync', 'overdueTasks', 'purgeMessages', 'postingCalendar']);
   });
   it('02:30 IST (21:00 UTC): the nightly reconciliation too', () => {
     expect(jobsDue(at('2026-11-17T21:00:00Z'))).toContain('reconcile');

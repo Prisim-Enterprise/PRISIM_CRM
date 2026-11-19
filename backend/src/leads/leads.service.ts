@@ -16,6 +16,8 @@ type Tx = Prisma.TransactionClient;
 
 const ownerSelect = { select: { id: true, fullName: true } } as const;
 
+import { LeadRulesService } from '../alerts/alerts';
+
 @Injectable()
 export class LeadsService {
   constructor(
@@ -24,6 +26,7 @@ export class LeadsService {
     private audit: AuditService,
     private notifications: NotificationsService,
     private storage: StorageService,
+    private leadRules: LeadRulesService,
   ) {}
 
   /**
@@ -357,6 +360,7 @@ export class LeadsService {
       for (const l of leads) plan.set(l.id, pool[0]);
     }
 
+    const rules = await this.leadRules.get();
     let changed = 0;
     const perUser = new Map<string, number>();
     for (const lead of leads) {
@@ -371,6 +375,14 @@ export class LeadsService {
         if (lead.status === 'NEW' || lead.status === 'UNASSIGNED') await this.setStatus(tx, lead, 'ASSIGNED', user.id, 'Lead assigned');
         // Open follow-ups move with the lead so nothing is orphaned.
         await tx.followUp.updateMany({ where: { leadId: lead.id, status: 'PENDING' }, data: { ownerId } });
+        // A lead with nothing planned gets a first call, so it lands in the owner's follow-ups straight away.
+        if (rules.firstFollowUpEnabled && !isClosed(lead.status) && !(await tx.followUp.count({ where: { leadId: lead.id, status: 'PENDING' } }))) {
+          await tx.followUp.create({ data: {
+            leadId: lead.id, ownerId, createdById: user.id, type: 'call',
+            dueAt: new Date(Date.now() + rules.firstFollowUpMinutes * 60_000),
+            note: 'First call to this new lead (added automatically when it was assigned).',
+          } });
+        }
       });
       changed++;
       perUser.set(ownerId, (perUser.get(ownerId) ?? 0) + 1);

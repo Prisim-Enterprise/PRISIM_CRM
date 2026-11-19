@@ -82,10 +82,10 @@ describe('AccessService.canActOnOwner', () => {
 describe('default roles', () => {
   const role = (key: string) => new Set(DEFAULT_ROLES.find((r) => r.key === key)!.permissions as readonly string[]);
 
-  it('only the Super Admin gets accounting, role management and client posting', () => {
+  it('only the Super Admin gets accounting, role management, client posting and the chat backup', () => {
     for (const r of DEFAULT_ROLES.filter((x) => x.key !== 'super_admin')) {
       const p = new Set(r.permissions as readonly string[]);
-      expect([...p].filter((k) => k.startsWith('accounting.') || k === 'roles.manage' || k === 'clients.manage')).toEqual([]);
+      expect([...p].filter((k) => k.startsWith('accounting.') || k === 'roles.manage' || k === 'clients.manage' || k === 'chat.backup.view')).toEqual([]);
     }
     expect(role('super_admin').has('accounting.manage')).toBe(true);
   });

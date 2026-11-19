@@ -37,6 +37,7 @@ import AdminUsers from './pages/admin/Users';
 import AdminRoles from './pages/admin/Roles';
 import AdminIntegrations from './pages/admin/Integrations';
 import AdminAudit from './pages/admin/Audit';
+import AdminChatBackup from './pages/admin/ChatBackup';
 
 const qc = new QueryClient({
   defaultOptions: { queries: { retry: (n, e) => n < 1 && !(e as { status?: number }).status, refetchOnWindowFocus: false } },
@@ -96,6 +97,7 @@ function App() {
         <Route path="admin/roles" element={<AdminRoles />} />
         <Route path="admin/integrations" element={<AdminIntegrations />} />
         <Route path="admin/audit" element={<AdminAudit />} />
+        <Route path="admin/chat-backup" element={<AdminChatBackup />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

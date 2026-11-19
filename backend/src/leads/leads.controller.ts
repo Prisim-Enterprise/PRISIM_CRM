@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { AuthUser, CurrentUser, RequireAny } from '../common/current-user';
 import { LeadsService } from './leads.service';
+import { AlertsModule } from '../alerts/alerts';
 import { AssignDto, AssignOneDto, CreateLeadDto, DeleteLeadsDto, LeadQuery, NoteDto, StatusDto, UnassignDto, UpdateLeadDto } from './leads.dto';
 
 @ApiTags('Leads')
@@ -92,5 +93,5 @@ export class LeadsController {
   }
 }
 
-@Module({ providers: [LeadsService], controllers: [LeadsController], exports: [LeadsService] })
+@Module({ imports: [AlertsModule], providers: [LeadsService], controllers: [LeadsController], exports: [LeadsService] })
 export class LeadsModule {}
