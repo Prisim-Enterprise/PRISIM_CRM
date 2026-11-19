@@ -246,7 +246,7 @@ export class FeedbackService {
     const f = await this.prisma.feedback.findUnique({ where: { id } });
     if (!f) throw new NotFoundException('Not found');
     if (!this.isOwner(user, f) && !user.permissions.has('feedback.manage')) throw new NotFoundException('Not found');
-    this.storage.validate('attachment', file);
+    this.storage.validate(file);
     const key = await this.storage.save('attachment', file.buffer, file.originalname, file.mimetype);
     // Anonymous: generic file name, no uploader, so the file record can't identify the author.
     const anonymousUpload = f.isAnonymous && this.isOwner(user, f);

@@ -67,3 +67,22 @@ describe('client invoice file upload', () => {
     expect(storage.remove).toHaveBeenCalledWith('invoices/key');
   });
 });
+
+describe('client-wise list of invoice files', () => {
+  it('returns every file with its client and the uploader\'s name, never the uploader id', async () => {
+    const prisma = {
+      acctInvoiceFile: { findMany: jest.fn().mockResolvedValue([
+        { id: 'f2', clientId: 'c2', fileName: 'b.pdf', uploadedById: 'u2', client: { id: 'c2', name: 'Beta', status: 'ACTIVE' } },
+        { id: 'f1', clientId: 'c1', fileName: 'a.pdf', uploadedById: 'gone', client: { id: 'c1', name: 'Acme', status: 'ACTIVE' } },
+      ]) },
+      user: { findMany: jest.fn().mockResolvedValue([{ id: 'u2', fullName: 'Priya Nair' }]) },
+    };
+    const svc = new InvoicesService(prisma as never, {} as never, {} as never, {} as never);
+    const rows = await svc.listAllInvoiceFiles();
+    expect(prisma.acctInvoiceFile.findMany.mock.calls[0][0].orderBy).toEqual({ createdAt: 'desc' });
+    expect(rows).toEqual([
+      { id: 'f2', clientId: 'c2', fileName: 'b.pdf', client: { id: 'c2', name: 'Beta', status: 'ACTIVE' }, uploadedBy: 'Priya Nair' },
+      { id: 'f1', clientId: 'c1', fileName: 'a.pdf', client: { id: 'c1', name: 'Acme', status: 'ACTIVE' }, uploadedBy: null },
+    ]);
+  });
+});

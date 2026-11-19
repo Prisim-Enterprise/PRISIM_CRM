@@ -169,6 +169,17 @@ export class InvoicesService {
     if (!client) throw new NotFoundException('Client not found');
   }
 
+  /** Every uploaded invoice file, newest first, with its client and who uploaded it, for the client-wise view. */
+  async listAllInvoiceFiles() {
+    const files = await this.prisma.acctInvoiceFile.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: { ...INVOICE_FILE_FIELDS, uploadedById: true, client: { select: { id: true, name: true, status: true } } },
+    });
+    const users = await this.prisma.user.findMany({ where: { id: { in: [...new Set(files.map((f) => f.uploadedById))] } }, select: { id: true, fullName: true } });
+    const names = new Map(users.map((x) => [x.id, x.fullName]));
+    return files.map(({ uploadedById, ...f }) => ({ ...f, uploadedBy: names.get(uploadedById) ?? null }));
+  }
+
   async listClientInvoiceFiles(clientId: string) {
     await this.assertClient(clientId);
     return this.prisma.acctInvoiceFile.findMany({ where: { clientId }, orderBy: { createdAt: 'desc' }, select: INVOICE_FILE_FIELDS });

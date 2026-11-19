@@ -6,17 +6,11 @@ import type { Response } from 'express';
 
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
-const ALLOWED: Record<'attachment' | 'recording', string[]> = {
-  attachment: [
-    'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf', 'text/plain', 'text/csv',
-    'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  ],
-  recording: [
-    'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/wave', 'audio/ogg', 'audio/webm',
-    'audio/mp4', 'audio/x-m4a', 'audio/aac', 'audio/amr',
-  ],
-};
+const ALLOWED_ATTACHMENTS = [
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf', 'text/plain', 'text/csv',
+  'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+];
 
 const BUCKET = 'crm-files';
 const STAGED_KEY = /^staged\/[0-9a-f-]{36}$/;
@@ -40,10 +34,10 @@ export class StorageService {
     });
   }
 
-  validate(kind: 'attachment' | 'recording', file?: Express.Multer.File) {
+  validate(file?: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file uploaded');
     if (file.size > MAX_UPLOAD_BYTES) throw new BadRequestException('File is larger than 25 MB');
-    if (!ALLOWED[kind].includes(file.mimetype)) throw new BadRequestException(`File type ${file.mimetype} is not allowed`);
+    if (!ALLOWED_ATTACHMENTS.includes(file.mimetype)) throw new BadRequestException(`File type ${file.mimetype} is not allowed`);
   }
 
   async save(kind: string, buffer: Buffer, originalName: string, mimeType = 'application/octet-stream'): Promise<string> {

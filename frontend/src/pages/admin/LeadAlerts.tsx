@@ -52,7 +52,7 @@ export function LeadAlertsPanel() {
 
       <Card title="When a lead isn’t being worked">
         <div className="grid gap-3 p-4 sm:grid-cols-3">
-          <Field label="Alert the owner after (hours)" hint="With no call, note, status change or completed follow-up by them.">
+          <Field label="Alert the owner after (hours)" hint="With no note, status change or completed follow-up by them.">
             <Input type="number" min={0.25} max={168} step={0.25} value={f.nudgeAfterHours} onChange={(e) => set({ nudgeAfterHours: num(e.target.value) })} />
           </Field>
           <Field label="Then tell their team leader and managers after (hours)">

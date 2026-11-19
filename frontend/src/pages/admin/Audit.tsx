@@ -17,7 +17,7 @@ export default function AdminAudit() {
         actions={
           <Select value={entityType} onChange={(e) => { setEntityType(e.target.value); setPage(1); }} className="w-44">
             <option value="">All areas</option>
-            {['lead', 'user', 'role', 'team', 'task', 'call', 'follow_up', 'feedback', 'integration', 'sync_run'].map((t) => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
+            {['lead', 'user', 'role', 'team', 'task', 'follow_up', 'feedback', 'integration', 'sync_run'].map((t) => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
           </Select>
         } />
       <Card>

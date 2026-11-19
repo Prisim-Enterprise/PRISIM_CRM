@@ -57,6 +57,8 @@ export class AccountingController {
   @Get('expenses/:id/receipt') receipt(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Res() res: Response) { return this.expenses.receipt(u, id, res); }
   @Delete('expenses/:id/receipt') removeReceipt(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.expenses.removeReceipt(u, id); }
 
+  @Get('invoice-files') @RequireAny(MANAGE)
+  listAllInvoiceFiles() { return this.invoices.listAllInvoiceFiles(); }
   @Get('invoice-files/:clientId') @RequireAny(MANAGE)
   listClientInvoiceFiles(@Param('clientId', ParseUUIDPipe) clientId: string) { return this.invoices.listClientInvoiceFiles(clientId); }
   @Post('invoice-files/:clientId') @RequireAny(MANAGE)

@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 // Seeds permissions, built-in roles and the first Super Admin.
-// Run with --demo to also create sample teams, users, leads, calls, tasks and feedback.
+// Run with --demo to also create sample teams, users, leads, follow-ups, tasks and feedback.
 import { PrismaClient, LeadStatus, TaskPriority, TaskStatus } from '@prisma/client';
 import { createClient } from '@supabase/supabase-js';
 import { DEFAULT_ROLES, PERMISSIONS } from '../src/common/permissions';
@@ -169,7 +169,7 @@ async function seedDemo() {
   await prisma.feedback.create({
     data: { kind: 'FEEDBACK', category: 'Management', subject: 'Too many leads assigned late in the evening', description: 'Leads assigned after 7pm are hard to call the same day. Could assignment pause after 6pm?', isAnonymous: true, submitterHash: 'demo-anonymous' },
   });
-  console.log(`✓ Demo data: 2 teams, 7 users, 60 leads, calls, follow-ups, tasks, feedback`);
+  console.log(`✓ Demo data: 2 teams, 7 users, 60 leads, follow-ups, tasks, feedback`);
   console.log('  Logins: manager@prisim.local, lead.north@prisim.local, rahul@prisim.local, priya@prisim.local …');
 }
 

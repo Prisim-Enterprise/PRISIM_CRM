@@ -39,13 +39,13 @@ The target is Supabase Auth, Postgres, Storage, and Edge Functions. The `crm` Ed
 
 The first confirmed Supabase Auth user whose email exactly matches `SEED_ADMIN_EMAIL` is provisioned as the initial Super Admin on first sign-in. After that it is an ordinary account: it gets Super Admin back automatically only if no active Super Admin is left (recovery). The CRM also refuses to deactivate, demote or delete the last active Super Admin. Set this variable only to the intended administrator in the hosting environment. Everyone else is added on the Users page, which sends their invitation, or an admin sets their password with Reset password. A sign-in account alone gives no access: the email must match a user in the CRM.
 
-To remove all data (leads, calls, follow-ups, tasks, feedback, logs, all users except Super Admins, and teams) while keeping roles and permissions:
+To remove all data (leads, follow-ups, tasks, feedback, logs, all users except Super Admins, and teams) while keeping roles and permissions:
 
 ```bash
 npm run clear-data -w backend
 ```
 
-Uploaded files and recordings are stored in `storage/`. Delete that folder's contents to remove them too.
+Uploaded files are stored in `storage/`. Delete that folder's contents to remove them too.
 
 ## What's included
 
@@ -63,11 +63,11 @@ Uploaded files and recordings are stored in `storage/`. Delete that folder's con
 
 **Website leads and the lead webhook.** Integrations has a separate *Website leads* Google Sheet connection (source "Website"), next to Meta Ads. A sheet shared as "Anyone with the link → Viewer" is read without any Google credentials; common headers (Name, Phone/Mobile, Email, City, Timestamp…) are detected automatically and extra columns such as Message are shown on the lead. The *Lead webhook* tab gives a secret URL (`POST /api/v1/webhooks/leads?key=…&source=website`) that other software can post leads to as JSON or form fields; repeats don't create duplicates. The dashboard shows website leads, leads by source and the latest website leads.
 
-**Activity feed.** The dashboard shows a live feed of who did what: lead status changes, assignments, notes, calls, follow-ups, task changes, feedback and client work updates. Admins see everyone, team leaders see their team and employees see their own. Anonymous feedback is never attributed.
+**Activity feed.** The dashboard shows a live feed of who did what: lead status changes, assignments, notes, follow-ups, task changes, feedback and client work updates. Admins see everyone, team leaders see their team and employees see their own. Anonymous feedback is never attributed.
 
 **Users & roles.** Super Admin, Admin/Manager, Team Leader and Employee are editable permission bundles (32 permissions), and custom roles can be added. The backend enforces every scope (all / team / own). Employees can **view all leads but only edit their own**, as decided.
 
-**Dashboard & reports (Module G).** Metrics, daily trends, lead status, campaign performance, call outcomes and per-employee performance, scoped by role, with date, campaign, team and employee filters. Metric definitions are documented in `backend/src/reports/reports.ts`.
+**Dashboard & reports (Module G).** Metrics, daily trends, lead status, campaign performance and per-employee performance, scoped by role, with date, campaign, team and employee filters. Metric definitions are documented in `backend/src/reports/reports.ts`.
 
 **Platform.** In-app notifications, audit log, rate limiting, security headers, validated inputs, CSV export (protected against formula injection) and private file storage.
 

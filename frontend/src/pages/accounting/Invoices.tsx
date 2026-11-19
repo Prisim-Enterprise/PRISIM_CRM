@@ -1,14 +1,14 @@
 import { Fragment, ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { format } from 'date-fns';
-import { ArrowLeft, Ban, FileText, Plus, Printer, RotateCcw, Save, Trash2, Upload, X } from 'lucide-react';
+import { ArrowLeft, Ban, Download, FileText, Plus, Printer, RotateCcw, Save, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errMsg } from '../../lib/api';
 import { compressInvoiceUpload } from '../../lib/compressUpload';
 import { useAuth } from '../../lib/auth';
-import { Badge, Button, Card, Empty, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, StatCard, Table, Td, Textarea, Th } from '../../components/ui';
+import { Badge, Button, Card, Empty, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, StatCard, Table, Tabs, Td, Textarea, Th } from '../../components/ui';
 import {
   AccountingGate, ClientDetails, dayLabel, GST_STATES, Invoice, InvoiceExtra, INVOICE_STATUS, InvoiceItem, InvoiceStatus, METHODS, rupees, Settings, ShipTo,
   stateOf, todayIso, useLookups, useSettings,
@@ -25,6 +25,9 @@ interface InvoiceFile {
   /** sizeBytes is what is stored (after compression); originalBytes is what was uploaded. */
   id: string; clientId: string; fileName: string; mimeType: string; sizeBytes: number; originalBytes: number; encoding: string | null; createdAt: string;
 }
+
+/** An invoice file as the client-wise list returns it. */
+interface ListedInvoiceFile extends InvoiceFile { client: { id: string; name: string; status: string }; uploadedBy: string | null }
 
 /** "1.2 MB" or "1.2 MB (was 3.4 MB)" when compression saved space. */
 const storedSize = (f: Pick<InvoiceFile, 'sizeBytes' | 'originalBytes'>) =>
@@ -62,7 +65,14 @@ export default function Invoices() {
   return <AccountingGate><InvoicesPage /></AccountingGate>;
 }
 
+type PageTab = 'invoices' | 'uploaded';
+
 function InvoicesPage() {
+  const [params, setParams] = useSearchParams();
+  const tab: PageTab = params.get('tab') === 'uploaded' ? 'uploaded' : 'invoices';
+  const setTab = (t: PageTab) => setParams(t === 'invoices' ? {} : { tab: t }, { replace: true });
+  /** Client shown in the Uploaded invoices tab; '' is every client. */
+  const [fileClient, setFileClient] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<InvoiceStatus | ''>('');
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -73,15 +83,15 @@ function InvoicesPage() {
   const [uploading, setUploading] = useState(false);
   const qc = useQueryClient();
   const clients = useQuery({ queryKey: ['client-directory'], queryFn: () => api.get<{ id: string; name: string }[]>('/clients/directory'), staleTime: 60_000 });
-  const clientFiles = useQuery({
-    queryKey: ['acct-invoice-files', clientId], queryFn: () => api.get<InvoiceFile[]>(`/accounting/invoice-files/${clientId}`), enabled: !!clientId,
-  });
+  const files = useQuery({ queryKey: ['acct-invoice-files'], queryFn: () => api.get<ListedInvoiceFile[]>('/accounting/invoice-files') });
   const q = useQuery({ queryKey: ['acct-invoices', search, status], queryFn: () => api.get<Invoice[]>('/accounting/invoices', { search, status }) });
   const all = useQuery({ queryKey: ['acct-invoices', '', ''], queryFn: () => api.get<Invoice[]>('/accounting/invoices'), enabled: !!(search || status) });
   const base = (search || status ? all.data : q.data) ?? [];
   const live = base.filter((i) => !i.cancelled);
   const list = q.data ?? [];
-  const closeUpload = () => { if (!uploading) { setUploadOpen(false); setClientId(''); setFile(null); setPrepNote(''); } };
+  const resetUpload = () => { setUploadOpen(false); setClientId(''); setFile(null); setPrepNote(''); };
+  const closeUpload = () => { if (!uploading) resetUpload(); };
+  const openUpload = (forClient = '') => { setClientId(forClient); setFile(null); setPrepNote(''); setUploadOpen(true); };
   const chooseFile = async (selected: File | undefined) => {
     setFile(null); setPrepNote('');
     if (!selected) return;
@@ -102,27 +112,21 @@ function InvoicesPage() {
     setUploading(true);
     try {
       const saved = await api.upload<InvoiceFile>(`/accounting/invoice-files/${clientId}`, file);
-      await qc.invalidateQueries({ queryKey: ['acct-invoice-files', clientId] });
+      await qc.invalidateQueries({ queryKey: ['acct-invoice-files'] });
       toast.success(saved.originalBytes > saved.sizeBytes ? `Invoice uploaded · stored as ${storedSize(saved)}` : 'Invoice uploaded');
-      setFile(null); setPrepNote('');
+      // Close the window and show the file under its client.
+      resetUpload(); setFileClient(saved.clientId); setTab('uploaded');
     } catch (e) { toast.error(errMsg(e)); } finally { setUploading(false); }
-  };
-  const openFile = async (invoiceFile: InvoiceFile) => {
-    try { window.open(await api.blobUrl(`/accounting/invoice-files/${invoiceFile.id}/file`), '_blank', 'noopener,noreferrer'); }
-    catch (e) { toast.error(errMsg(e)); }
-  };
-  const deleteFile = async (invoiceFile: InvoiceFile) => {
-    if (!confirm(`Delete ${invoiceFile.fileName}?`)) return;
-    try {
-      await api.del(`/accounting/invoice-files/${invoiceFile.id}`);
-      await qc.invalidateQueries({ queryKey: ['acct-invoice-files', clientId] });
-      toast.success('Invoice file deleted');
-    } catch (e) { toast.error(errMsg(e)); }
   };
   return (
     <div className="space-y-4">
       <PageHeader title="Invoices" subtitle="Tax invoices with GST, and the payments received. Make one from a quotation with “Create invoice” on the quotation."
-        actions={<><Button variant="secondary" onClick={() => setUploadOpen(true)}><Upload className="h-4 w-4" />Upload invoice</Button><Link to="/accounting/invoices/new"><Button><Plus className="h-4 w-4" />New invoice</Button></Link></>} />
+        actions={<><Button variant="secondary" onClick={() => openUpload(tab === 'uploaded' ? fileClient : '')}><Upload className="h-4 w-4" />Upload invoice</Button><Link to="/accounting/invoices/new"><Button><Plus className="h-4 w-4" />New invoice</Button></Link></>} />
+      <Tabs value={tab} onChange={setTab} tabs={[
+        { value: 'invoices', label: 'Invoices' },
+        { value: 'uploaded', label: 'Uploaded invoices', count: files.data?.length },
+      ]} />
+      {tab === 'uploaded' ? <UploadedInvoices files={files} client={fileClient} onClient={setFileClient} onUpload={openUpload} /> : <>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Invoiced" value={rupees(live.reduce((a, i) => a + i.total, 0))} sub={`${live.length} invoice${live.length === 1 ? '' : 's'}`} />
         <StatCard label="Received" value={rupees(live.reduce((a, i) => a + i.paid, 0))} tone="good" />
@@ -161,6 +165,7 @@ function InvoicesPage() {
           </Table>
         )}
       </Card>
+      </>}
       <Modal open={uploadOpen} onClose={closeUpload} title="Upload client invoice" footer={<>
         <Button variant="secondary" onClick={closeUpload} disabled={uploading}>Cancel</Button>
         <Button onClick={uploadFile} loading={uploading} disabled={!clientId || !file || compressing}>Upload invoice</Button>
@@ -176,20 +181,104 @@ function InvoicesPage() {
         </Field>
         {compressing && <p className="text-sm text-slate-500">Compressing to 1 MB or less… large PDFs can take a few seconds.</p>}
         {file && <p className="text-sm text-slate-600">Ready: {file.name} · {fileSize(file.size)}{prepNote && ` · ${prepNote}`}</p>}
-        {clientId && <section>
-          <h3 className="mb-2 text-sm font-semibold">Uploaded invoices</h3>
-          {clientFiles.isLoading ? <Spinner /> : clientFiles.error ? <ErrorBox error={clientFiles.error} /> : !clientFiles.data?.length ? <p className="text-sm text-slate-500">No invoice files for this client yet.</p> : (
-            <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
-              {clientFiles.data.map((invoiceFile) => <li key={invoiceFile.id} className="flex items-center gap-2 px-3 py-2 text-sm">
-                <FileText className="h-4 w-4 shrink-0 text-slate-400" />
-                <button className="min-w-0 flex-1 truncate text-left text-indigo-700 hover:underline" onClick={() => void openFile(invoiceFile)}>{invoiceFile.fileName}</button>
-                <span className="shrink-0 text-xs text-slate-500" title="Size as stored">{storedSize(invoiceFile)}</span>
-                <button className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600" title="Delete invoice file" onClick={() => void deleteFile(invoiceFile)}><Trash2 className="h-4 w-4" /></button>
-              </li>)}
-            </ul>
-          )}
-        </section>}
       </Modal>
+    </div>
+  );
+}
+
+// ───────────────────────── Uploaded invoice files, client-wise ─────────────────────────
+
+function UploadedInvoices({ files, client, onClient, onUpload }: {
+  files: UseQueryResult<ListedInvoiceFile[]>; client: string; onClient: (id: string) => void; onUpload: (clientId: string) => void;
+}) {
+  const qc = useQueryClient();
+  const [search, setSearch] = useState('');
+  const all = useMemo(() => files.data ?? [], [files.data]);
+  // Clients that have files, A to Z, for the filter.
+  const clients = useMemo(() => [...new Map(all.map((f) => [f.client.id, f.client])).values()].sort((a, b) => a.name.localeCompare(b.name)), [all]);
+  const shownClient = clients.some((c) => c.id === client) ? client : '';
+  const term = search.trim().toLowerCase();
+  const groups = useMemo(() => {
+    const m = new Map<string, { client: ListedInvoiceFile['client']; files: ListedInvoiceFile[] }>();
+    for (const f of all) {
+      if (shownClient && f.client.id !== shownClient) continue;
+      if (term && !f.fileName.toLowerCase().includes(term) && !f.client.name.toLowerCase().includes(term)) continue;
+      const g = m.get(f.client.id) ?? { client: f.client, files: [] };
+      g.files.push(f);
+      m.set(f.client.id, g);
+    }
+    return [...m.values()].sort((a, b) => a.client.name.localeCompare(b.client.name));
+  }, [all, shownClient, term]);
+
+  const open = async (f: InvoiceFile) => {
+    try { window.open(await api.blobUrl(`/accounting/invoice-files/${f.id}/file`), '_blank', 'noopener,noreferrer'); }
+    catch (e) { toast.error(errMsg(e)); }
+  };
+  const download = async (f: InvoiceFile) => {
+    try {
+      const url = await api.blobUrl(`/accounting/invoice-files/${f.id}/file`);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = f.fileName;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) { toast.error(errMsg(e)); }
+  };
+  const remove = async (f: InvoiceFile) => {
+    if (!confirm(`Delete ${f.fileName}?`)) return;
+    try {
+      await api.del(`/accounting/invoice-files/${f.id}`);
+      await qc.invalidateQueries({ queryKey: ['acct-invoice-files'] });
+      toast.success('Invoice file deleted');
+    } catch (e) { toast.error(errMsg(e)); }
+  };
+
+  if (files.isLoading) return <Card><Spinner /></Card>;
+  if (files.error) return <Card><div className="p-4"><ErrorBox error={files.error} /></div></Card>;
+  if (!all.length) return (
+    <Card>
+      <Empty title="No uploaded invoices yet" icon={<FileText className="h-9 w-9" />}>
+        <p className="text-sm text-slate-500">Upload a client&apos;s invoice file and it is listed here under that client.</p>
+        <Button className="mt-3" onClick={() => onUpload('')}><Upload className="h-4 w-4" />Upload invoice</Button>
+      </Empty>
+    </Card>
+  );
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        <Select value={shownClient} onChange={(e) => onClient(e.target.value)} className="w-56" aria-label="Client">
+          <option value="">All clients ({clients.length})</option>
+          {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </Select>
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search file or client…" className="w-64" aria-label="Search files" />
+      </div>
+      {!groups.length ? <Card><Empty title="No files match" icon={<FileText className="h-9 w-9" />} /></Card> : groups.map((g) => (
+        <Card key={g.client.id}
+          title={<span>{g.client.name} <span className="font-normal text-slate-500">· {g.files.length} file{g.files.length === 1 ? '' : 's'}</span></span>}
+          actions={<Button variant="secondary" onClick={() => onUpload(g.client.id)}><Upload className="h-4 w-4" />Upload</Button>}>
+          <Table>
+            <thead><tr><Th>File</Th><Th>Uploaded</Th><Th>By</Th><Th className="text-right">Size</Th><Th className="text-right"><span className="sr-only">Actions</span></Th></tr></thead>
+            <tbody>
+              {g.files.map((f) => (
+                <tr key={f.id} className="hover:bg-slate-50">
+                  <Td>
+                    <button className="flex max-w-[22rem] items-center gap-2 text-left text-indigo-700 hover:underline" onClick={() => void open(f)} title="Open">
+                      <FileText className="h-4 w-4 shrink-0 text-slate-400" /><span className="truncate">{f.fileName}</span>
+                    </button>
+                  </Td>
+                  <Td className="whitespace-nowrap">{format(new Date(f.createdAt), 'd MMM yyyy, h:mm a')}</Td>
+                  <Td>{f.uploadedBy ?? '—'}</Td>
+                  <Td className="whitespace-nowrap text-right tabular-nums">{storedSize(f)}</Td>
+                  <Td className="whitespace-nowrap text-right">
+                    <button className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" title="Download" onClick={() => void download(f)}><Download className="h-4 w-4" /></button>
+                    <button className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600" title="Delete" onClick={() => void remove(f)}><Trash2 className="h-4 w-4" /></button>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </Card>
+      ))}
     </div>
   );
 }
@@ -254,6 +343,8 @@ function InvoiceEditor() {
   const { me } = useAuth();
   const settings = useSettings();
   const lookups = useLookups();
+  /** Which copies the next print includes: both, or just one so it can be saved as its own PDF. */
+  const [printing, setPrinting] = useState<readonly Copy[]>(COPIES);
   const existing = useQuery({ queryKey: ['acct-invoice', id], queryFn: () => api.get<Invoice>(`/accounting/invoices/${id}`), enabled: !isNew });
   const next = useQuery({ queryKey: ['acct-invoice-next'], queryFn: () => api.get<{ number: string }>('/accounting/invoices/next-number'), enabled: isNew });
   const clients = useQuery({ queryKey: ['client-directory'], queryFn: () => api.get<{ id: string; name: string }[]>('/clients/directory'), staleTime: 60_000 });
@@ -306,11 +397,23 @@ function InvoiceEditor() {
       const saved = isNew ? await api.post<Invoice>('/accounting/invoices', body) : await api.patch<Invoice>(`/accounting/invoices/${id}`, body);
       refresh(); qc.invalidateQueries({ queryKey: ['acct-invoice-next'] }); qc.setQueryData(['acct-invoice', saved.id], saved);
       toast.success(isNew ? `Invoice ${saved.number} saved` : 'Saved');
-      if (isNew) nav(`/accounting/invoices/${saved.id}`, { replace: true }); else setF(toForm(saved));
+      setF(toForm(saved));
+      if (isNew) nav(`/accounting/invoices/${saved.id}`, { replace: true });
       return saved;
     } catch (e) { toast.error(errMsg(e)); return null; } finally { setSaving(false); }
   };
-  const print = async () => { if (dirty && !(await save())) return; setTimeout(() => window.print(), 150); };
+  const print = async (copies: readonly Copy[]) => {
+    let number = f.number;
+    if (dirty) { const saved = await save(); if (!saved) return; number = saved.number; }
+    setPrinting(copies);
+    // The browser names the saved PDF after the page title, so each copy gets its own file name.
+    const title = document.title;
+    const name = number || 'Invoice';
+    document.title = copies.length === 1 ? `${name} - ${COPY_NAMES[copies[0]]}` : name;
+    const restore = () => { document.title = title; setPrinting(COPIES); window.removeEventListener('afterprint', restore); };
+    window.addEventListener('afterprint', restore);
+    setTimeout(() => window.print(), 150);
+  };
   const setCancelled = async (cancelled: boolean) => {
     if (cancelled && !confirm(`Cancel invoice ${f.number}? It stays on record but no longer counts as due.`)) return;
     try { const s = await api.patch<Invoice>(`/accounting/invoices/${id}`, { cancelled }); qc.setQueryData(['acct-invoice', id], s); refresh(); toast.success(cancelled ? 'Invoice cancelled' : 'Invoice restored'); }
@@ -340,7 +443,9 @@ function InvoiceEditor() {
           {inv && (inv.cancelled
             ? <Button variant="secondary" onClick={() => setCancelled(false)}><RotateCcw className="h-4 w-4" />Restore</Button>
             : <Button variant="secondary" onClick={() => setCancelled(true)}><Ban className="h-4 w-4" />Cancel invoice</Button>)}
-          <Button variant="secondary" onClick={print}><Printer className="h-4 w-4" />Print / Save PDF</Button>
+          <Button variant="secondary" onClick={() => print(['ORIGINAL FOR RECIPIENT'])} title="Print or save only the original copy, for the client"><Printer className="h-4 w-4" />Original</Button>
+          <Button variant="secondary" onClick={() => print(['DUPLICATE FOR SUPPLIER'])} title="Print or save only the duplicate copy, for Prisim's records"><Printer className="h-4 w-4" />Duplicate</Button>
+          <Button variant="secondary" onClick={() => print(COPIES)} title="Both copies, one per page"><Printer className="h-4 w-4" />Both copies</Button>
           <Button loading={saving} onClick={save}><Save className="h-4 w-4" />Save</Button>
         </div>
       </div>
@@ -458,7 +563,7 @@ function InvoiceEditor() {
           )}
         </div>
 
-        <div className="overflow-x-auto print:overflow-visible"><InvoiceSheet inv={sheet} s={settings.data} /></div>
+        <div className="overflow-x-auto print:overflow-visible"><InvoiceCopies inv={sheet} s={settings.data} printing={printing} /></div>
       </div>
 
       {paying && inv && <PaymentModal title={`Payment for ${inv.number}`} max={inv.balance} onClose={() => setPaying(false)}
@@ -502,8 +607,29 @@ function Party({ title, name, address, gstin, stateCode, extra }: { title?: stri
   );
 }
 
-/** Prisim's tax invoice layout. This element alone prints (A4). */
-export function InvoiceSheet({ inv, s }: { inv: SheetInvoice; s: Settings }) {
+/** The two copies a tax invoice is issued in, each printed on its own A4 page. */
+const COPIES = ['ORIGINAL FOR RECIPIENT', 'DUPLICATE FOR SUPPLIER'] as const;
+type Copy = (typeof COPIES)[number];
+const COPY_NAMES: Record<Copy, string> = { 'ORIGINAL FOR RECIPIENT': 'Original for Recipient', 'DUPLICATE FOR SUPPLIER': 'Duplicate for Supplier' };
+
+/**
+ * Both copies of the invoice, one after the other on screen. This element alone prints:
+ * the copies in `printing`, each on its own page.
+ */
+export function InvoiceCopies({ inv, s, printing = COPIES }: { inv: SheetInvoice; s: Settings; printing?: readonly Copy[] }) {
+  return (
+    <div id="invoice-sheet" className="space-y-6 print:space-y-0">
+      {COPIES.map((copy) => {
+        const printed = printing.includes(copy);
+        const breakBefore = printed && COPIES.slice(0, COPIES.indexOf(copy)).some((c) => printing.includes(c));
+        return <InvoiceSheet key={copy} inv={inv} s={s} copy={copy} className={clsx(!printed && 'print:hidden', breakBefore && 'print:break-before-page')} />;
+      })}
+    </div>
+  );
+}
+
+/** Prisim's tax invoice layout: one copy on one A4 page. */
+function InvoiceSheet({ inv, s, copy, className }: { inv: SheetInvoice; s: Settings; copy: Copy; className?: string }) {
   const x = inv.extra ?? {};
   const half = pctLabel(inv.gstRate / 2);
   const buyerState = inv.clientDetails.stateCode || s.stateCode;
@@ -526,11 +652,11 @@ export function InvoiceSheet({ inv, s }: { inv: SheetInvoice; s: Settings }) {
   const qtyTotal = units.size === 1 && [...units][0] ? `${inv.items.reduce((a, it) => a + it.qty, 0)} ${[...units][0]}` : '';
 
   return (
-    <div id="invoice-sheet" className="relative mx-auto w-full max-w-[794px] bg-white px-6 pb-4 pt-5 text-black shadow-card print:w-full print:px-0 print:pt-0 print:shadow-none" style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
+    <div className={clsx('invoice-copy relative mx-auto w-full max-w-[794px] bg-white px-6 pb-4 pt-5 text-black shadow-card print:w-full print:px-0 print:pt-0 print:shadow-none', className)} style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}>
       {inv.cancelled && <div className="pointer-events-none absolute inset-0 flex items-center justify-center"><span className="-rotate-12 rounded border-4 border-rose-500/60 px-6 py-2 text-5xl font-bold text-rose-500/60">CANCELLED</span></div>}
       <div className="relative mb-0.5 text-center">
         <span className="text-[15px] font-bold">Tax Invoice</span>
-        <span className="absolute right-0 top-0.5 text-[10px] italic">(ORIGINAL FOR RECIPIENT)</span>
+        <span className="absolute right-0 top-0.5 text-[10px] italic">({copy})</span>
       </div>
 
       {/* Header: seller, consignee and buyer on the left; reference boxes on the right */}

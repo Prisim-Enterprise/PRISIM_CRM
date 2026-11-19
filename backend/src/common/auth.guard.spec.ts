@@ -12,7 +12,7 @@ const email = verifiedEmail as jest.Mock;
 const perm = (key: string) => ({ permission: { key } });
 const dbUser = (over: Record<string, unknown> = {}) => ({
   id: 'u1', fullName: 'Asha', email: 'asha@x.com', teamId: 't1', isActive: true,
-  roles: [{ role: { key: 'employee', permissions: [perm('leads.view.all'), perm('calls.view.team')] } }],
+  roles: [{ role: { key: 'employee', permissions: [perm('leads.view.all'), perm('tasks.view.team')] } }],
   ledTeams: [{ id: 't2' }], teamMemberships: [{ teamId: 't1' }, { teamId: 't3' }],
   permissionOverrides: [{ effect: 'GRANT', permission: { key: 'accounting.expenses.submit' } }, { effect: 'DENY', permission: { key: 'leads.view.all' } }],
   ...over,
@@ -64,7 +64,7 @@ describe('AuthGuard', () => {
     const { guard, ctx, req } = setup();
     await guard.canActivate(ctx);
     const u = req.user as { permissions: Set<string>; teamIds: string[]; roleKeys: string[] };
-    expect([...u.permissions].sort()).toEqual(['accounting.expenses.submit', 'calls.view.team']);
+    expect([...u.permissions].sort()).toEqual(['accounting.expenses.submit', 'tasks.view.team']);
     expect(u.teamIds.sort()).toEqual(['t1', 't2', 't3']);
     expect(u.roleKeys).toEqual(['employee']);
   });
@@ -73,10 +73,10 @@ describe('AuthGuard', () => {
     const { guard } = setup();
     const prisma = (guard as unknown as { prisma: PrismaService }).prisma;
     (prisma.user.findUnique as jest.Mock).mockResolvedValueOnce(dbUser({
-      permissionOverrides: [{ effect: 'DENY', permission: { key: 'calls.view.team' } }, { effect: 'GRANT', permission: { key: 'calls.view.team' } }],
+      permissionOverrides: [{ effect: 'DENY', permission: { key: 'tasks.view.team' } }, { effect: 'GRANT', permission: { key: 'tasks.view.team' } }],
     }));
     const u = await guard.loadUser('u1');
-    expect(u.permissions.has('calls.view.team')).toBe(false);
+    expect(u.permissions.has('tasks.view.team')).toBe(false);
   });
 
   it('enforces @RequireAny: 403 without any of the listed permissions', async () => {

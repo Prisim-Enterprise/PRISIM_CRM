@@ -47,7 +47,6 @@ VITE_SUPABASE_PUBLISHABLE_KEY=<from Supabase>
 FEEDBACK_HASH_SECRET=<random>             # never change it after go-live
 WEB_ORIGIN=https://crm.yourcompany.in
 PUBLIC_API_URL=https://crm.yourcompany.in
-TELEPHONY_WEBHOOK_SECRET=<random>
 SEED_ADMIN_EMAIL=you@yourcompany.in
 ```
 
@@ -71,17 +70,7 @@ Open `https://crm.yourcompany.in` and sign in. Caddy gets the certificate on fir
 
 Meta Lead Ads → Google Sheets is usually connected with Meta's native integration or a connector (e.g. Zapier/Make/LeadsBridge). Keep Meta's `id` column: it is the deduplication key.
 
-## 5. Connect Exotel (click-to-call + recordings)
-
-1. Exotel account → buy an ExoPhone, enable call recording, and note the **SID, API key, API token** and subdomain (`api.exotel.com`, or `api.in.exotel.com` for the Mumbai cluster).
-2. In `.env`: `TELEPHONY_PROVIDER=exotel`, `EXOTEL_SID`, `EXOTEL_API_KEY`, `EXOTEL_API_TOKEN`, `EXOTEL_SUBDOMAIN`, `EXOTEL_CALLER_ID`.
-3. `PUBLIC_API_URL` must be the public HTTPS address. Exotel posts call results to `/api/v1/telephony/webhooks/exotel?token=…`.
-4. Restart: `docker compose -f docker-compose.prod.yml up -d api`.
-5. Every employee needs a phone number on their profile, because Exotel rings that number first.
-
-**Compliance:** call recording in India requires informing the customer (e.g. an IVR "this call may be recorded" announcement), a defined retention period, and restricted access. Access is already restricted in the CRM. Agree the retention period with your legal advisor before go-live.
-
-## 6. Backups
+## 5. Backups
 
 ```bash
 chmod +x scripts/backup.sh
@@ -91,7 +80,7 @@ crontab -e
 
 Copy `/opt/prisim-backups` off the VM regularly (e.g. to OCI Object Storage, which includes 20 GB free). Practise a restore every quarter (command at the bottom of the script).
 
-## 7. Updating
+## 6. Updating
 
 ```bash
 cd /opt/prisim-crm && git pull     # or copy the new files

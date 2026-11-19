@@ -1,5 +1,5 @@
 // Central permission catalog. Roles are configurable bundles of these keys.
-// "Own" access (own leads, own tasks, own calls, own feedback) is always implied.
+// "Own" access (own leads, own tasks, own feedback) is always implied.
 export const PERMISSIONS = {
   // Leads
   'leads.view.all': ['Leads', 'View all leads'],
@@ -94,7 +94,7 @@ export const DEFAULT_ROLES: { key: string; name: string; description: string; pe
   {
     key: 'employee',
     name: 'Sales Employee',
-    description: 'Works assigned leads, logs calls and follow-ups, manages own tasks and feedback.',
+    description: 'Works assigned leads and follow-ups, manages own tasks and feedback.',
     // Product decision: employees can view all leads but edit only their own.
     permissions: ['leads.view.all', 'quotations.manage'],
   },

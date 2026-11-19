@@ -30,7 +30,7 @@ export class LeadsService {
   ) {}
 
   /**
-   * Deletes leads for good, with their calls, notes, follow-ups and history. Linked tasks stay,
+   * Deletes leads for good, with their notes, follow-ups and history. Linked tasks stay,
    * without the link. Imports remember the source id, so the same lead isn't recreated.
    */
   async remove(user: AuthUser, ids: string[]) {
@@ -38,6 +38,7 @@ export class LeadsService {
       where: { id: { in: ids } },
       select: {
         id: true, fullName: true, phoneE164: true, email: true, sourceId: true, externalLeadId: true, assignedUserId: true,
+        // Old call recordings from before calling was removed: their files go with the lead.
         calls: { where: { recordingKey: { not: null } }, select: { recordingKey: true } },
       },
     });
@@ -64,7 +65,7 @@ export class LeadsService {
     return { deleted: found.length };
   }
 
-  // ───────────── status (shared with calls, follow-ups and sync) ─────────────
+  // ───────────── status (shared with follow-ups and sync) ─────────────
 
   async setStatus(tx: Tx, lead: Pick<Lead, 'id' | 'status'>, to: LeadStatus, actorId: string | null, reason?: string | null) {
     if (lead.status === to) return;

@@ -2,7 +2,7 @@
   "name": "prisim-crm",
   "private": true,
   "version": "1.0.0",
-  "description": "Prisim CRM - lead management, follow-ups, calls, tasks and feedback in one dashboard",
+  "description": "Prisim CRM - lead management, follow-ups, tasks and feedback in one dashboard",
   "workspaces": [
     "backend",
     "frontend"

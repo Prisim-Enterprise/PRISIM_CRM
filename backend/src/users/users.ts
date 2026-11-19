@@ -181,7 +181,7 @@ export class UsersService {
   }
 
   /**
-   * Removes a person from the CRM. The row stays so past calls and leads keep their name;
+   * Removes a person from the CRM. The row stays so past leads and records keep their name;
    * they vanish from lists, lose all access, and their open work is released.
    */
   async remove(id: string, actor: AuthUser) {

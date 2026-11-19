@@ -367,7 +367,7 @@ export class ClientsService {
   async attach(user: AuthUser, id: string, file: Express.Multer.File) {
     const { work, isAssignee, canManage } = await this.loadWork(user, id);
     if (!isAssignee && !canManage) throw new ForbiddenException();
-    this.storage.validate('attachment', file);
+    this.storage.validate(file);
     const key = await this.storage.save('attachment', file.buffer, file.originalname, file.mimetype);
     const a = await this.prisma.attachment.create({
       data: { storageKey: key, fileName: file.originalname.slice(0, 200), mimeType: file.mimetype, sizeBytes: file.size, uploadedById: user.id, clientWorkId: id },

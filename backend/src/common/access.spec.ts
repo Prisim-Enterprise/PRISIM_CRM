@@ -23,32 +23,32 @@ describe('AccessService.scope', () => {
     expect(svc.scope(user(), 'leads.view')).toBe('own');
   });
   it('a permission for another area does not leak', () => {
-    expect(svc.scope(user({ perms: ['calls.view.all'] }), 'leads.view')).toBe('own');
+    expect(svc.scope(user({ perms: ['tasks.view.all'] }), 'leads.view')).toBe('own');
   });
 });
 
 describe('AccessService.userIdsInScope', () => {
   it('all → unrestricted, without touching the database', async () => {
     const { svc, findMany } = access();
-    expect(await svc.userIdsInScope(user({ perms: ['calls.view.all'] }), 'calls.view')).toBeNull();
+    expect(await svc.userIdsInScope(user({ perms: ['tasks.view.all'] }), 'tasks.view')).toBeNull();
     expect(findMany).not.toHaveBeenCalled();
   });
 
   it('own → just me', async () => {
     const { svc } = access();
-    expect(await svc.userIdsInScope(user(), 'calls.view')).toEqual(['me']);
+    expect(await svc.userIdsInScope(user(), 'tasks.view')).toEqual(['me']);
   });
 
   it('team → me plus members of my teams (primary team or membership), de-duplicated', async () => {
     const { svc, findMany } = access([{ id: 'a' }, { id: 'me' }, { id: 'b' }]);
-    const ids = await svc.userIdsInScope(user({ perms: ['calls.view.team'], teamIds: ['t1', 't2'] }), 'calls.view');
+    const ids = await svc.userIdsInScope(user({ perms: ['tasks.view.team'], teamIds: ['t1', 't2'] }), 'tasks.view');
     expect(ids).toEqual(['me', 'a', 'b']);
     expect(findMany.mock.calls[0][0].where).toEqual({ OR: [{ teamId: { in: ['t1', 't2'] } }, { teamMemberships: { some: { teamId: { in: ['t1', 't2'] } } } }] });
   });
 
   it('team scope with no team falls back to own', async () => {
     const { svc, findMany } = access();
-    expect(await svc.userIdsInScope(user({ perms: ['calls.view.team'] }), 'calls.view')).toEqual(['me']);
+    expect(await svc.userIdsInScope(user({ perms: ['tasks.view.team'] }), 'tasks.view')).toEqual(['me']);
     expect(findMany).not.toHaveBeenCalled();
   });
 });
@@ -94,6 +94,6 @@ describe('default roles', () => {
     const emp = DEFAULT_ROLES.find((r) => r.key === 'employee');
     if (!emp) return; // role set may be customised
     const p = new Set(emp.permissions as readonly string[]);
-    for (const k of ['leads.edit.all', 'calls.view.all', 'calls.recordings.all', 'users.manage', 'roles.manage', 'audit.view']) expect(p.has(k)).toBe(false);
+    for (const k of ['leads.edit.all', 'tasks.view.all', 'users.manage', 'roles.manage', 'audit.view']) expect(p.has(k)).toBe(false);
   });
 });

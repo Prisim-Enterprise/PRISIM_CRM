@@ -62,7 +62,7 @@ body { @apply bg-slate-50 text-slate-800 antialiased; letter-spacing: -0.01em; }
 .recharts-cartesian-axis-tick-value { fill: var(--color-slate-500); }
 .recharts-legend-item-text { color: var(--color-slate-600) !important; }
 
-/* Quotations print on their own: only the quotation sheet, on A4, with its colours. */
+/* Quotations and invoices print on their own: only the sheet, on A4, with its colours. */
 @media print {
   @page { size: A4; margin: 8mm; }
   html:has(#quotation-sheet), body:has(#quotation-sheet), html:has(#invoice-sheet), body:has(#invoice-sheet) { background: #fff !important; }
@@ -73,4 +73,6 @@ body { @apply bg-slate-50 text-slate-800 antialiased; letter-spacing: -0.01em; }
   body:has(#invoice-sheet) #invoice-sheet * { visibility: visible; }
   body:has(#quotation-sheet) #quotation-sheet, body:has(#invoice-sheet) #invoice-sheet { position: absolute; left: 0; top: 0; width: 100%; }
   #quotation-sheet, #quotation-sheet *, #invoice-sheet, #invoice-sheet * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  /* Invoices print as one or both copies (original, duplicate); each copy starts on a new page. */
+  #invoice-sheet .invoice-copy { break-inside: avoid; }
 }

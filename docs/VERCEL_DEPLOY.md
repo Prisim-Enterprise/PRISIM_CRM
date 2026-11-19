@@ -46,7 +46,6 @@ Schema changes are not applied by Vercel. Run `npm run prisma:deploy -w backend`
 - Files over 3 MB go from the browser straight to Supabase, because Vercel limits a request to about 4.5 MB. The upload limit is 25 MB.
 - Vercel also limits a reply to about 4.5 MB, which affects very large CSV exports from the Leads page.
 - A function stops after 60 seconds, so a very large CSV import or sheet re-read may need splitting.
-- The mock telephony provider relies on timers, which do not run once a function has replied. Use a real provider in production.
 
 ## Watching the scheduled jobs
 
