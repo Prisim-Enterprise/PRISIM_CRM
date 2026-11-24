@@ -5,14 +5,14 @@ import clsx from 'clsx';
 import {
   addDays, addMonths, endOfMonth, format, isSameDay, isSameMonth, startOfMonth, startOfWeek,
 } from 'date-fns';
-import { Camera, ChevronLeft, ChevronRight, Clapperboard, ExternalLink, Image, IndianRupee, PenLine, Plus, Trash2 } from 'lucide-react';
+import { Camera, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, FileText, Image, IndianRupee, PenLine, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errMsg } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useDirectory } from '../lib/hooks';
 import { toLocalInput } from '../lib/format';
 import {
-  Avatar, Badge, Button, Card, Empty, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, StatCard, Table, Tabs, Td, Textarea, Th,
+  Badge, Button, Card, Empty, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, StatCard, Table, Tabs, Td, Textarea, Th,
 } from '../components/ui';
 
 type Kind = 'SHOOT' | 'REEL' | 'CONTENT' | 'IMAGE';
@@ -25,12 +25,21 @@ interface Item {
   platform: string | null; location: string | null; models: string | null; link: string | null; notes: string | null;
   _count: { expenses: number };
   permissions: { canManage: boolean; canUpdate: boolean };
+  /** Opened from a view-only type tab. */
+  readOnly?: boolean;
 }
 interface Expense {
   id: string; spentOn: string; category: Category; payee: string; description: string | null; amount: number;
   paid: boolean; paidOn: string | null; shoot: { id: string; title: string; scheduledAt: string } | null; createdBy: Person;
 }
 interface Expenses { items: Expense[]; totals: { total: number; paid: number; unpaid: number; byCategory: Record<Category, number> } }
+type ScriptStatus = 'WRITTEN' | 'APPROVED';
+interface Script {
+  id: string; title: string; body: string; scheduledAt: string; status: ScriptStatus; approvedAt: string | null; updatedAt: string;
+  client: { id: string; name: string }; writer: Person; permissions: { canEdit: boolean };
+  /** Opened from the view-only Scripts tab. */
+  readOnly?: boolean;
+}
 interface Summary { thisWeek: Record<Kind, number>; overdue: number; mine: number }
 
 export const KIND: Record<Kind, { label: string; plural: string; icon: typeof Camera; chip: string; dot: string }> = {
@@ -58,23 +67,25 @@ const inr = (n: number) => '₹' + n.toLocaleString('en-IN', { maximumFractionDi
 const isOpen = (s: Status) => s !== 'DONE' && s !== 'CANCELLED';
 const invalidate = (qc: ReturnType<typeof useQueryClient>) => { for (const k of ['media', 'media-summary', 'media-expenses']) qc.invalidateQueries({ queryKey: [k] }); };
 
-type Tab = 'calendar' | Kind | 'expenses';
+type Tab = 'calendar' | Kind | 'scripts' | 'expenses';
 /** How many entries a calendar day shows before "+N more". */
 const MAX_PER_DAY = 3;
 
 export default function Media() {
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const tab = (params.get('tab') as Tab) || 'calendar';
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
   const [assignee, setAssignee] = useState('');
-  const [client, setClient] = useState(''); // '' everyone, 'none' Prisim's own, or a client id
+  const [client, setClient] = useState(''); // '' every client, 'none' entries without one (from before it was required), or a client id
   const [editing, setEditing] = useState<Partial<Item> | null>(null);
   const [expense, setExpense] = useState<Partial<Expense> | null>(null);
+  const [script, setScript] = useState<Partial<Script> | null>(null);
   const manage = can('media.manage');
   const seesAll = manage || can('media.view.all');
-  const money = can('media.expenses');
+  // Expenses are for Super Admins only (the API enforces this too).
+  const money = !!me?.roles.includes('super_admin');
   const dir = useDirectory();
 
   // The calendar shows whole weeks, so it reaches a few days into the months either side.
@@ -85,7 +96,7 @@ export default function Media() {
     queryFn: () => api.get<Item[]>('/media', { from: from.toISOString(), to: to.toISOString(), assignee: assignee || undefined, client: client || undefined }),
   });
   // Clients to filter by: the client list, plus any client already on this month's schedule.
-  const clientList = useQuery({ queryKey: ['clients', '', ''], queryFn: () => api.get<{ id: string; name: string }[]>('/clients', {}), staleTime: 60_000 });
+  const clientList = useQuery({ queryKey: ['client-directory'], queryFn: () => api.get<{ id: string; name: string }[]>('/clients/directory'), staleTime: 60_000 });
   const clientOptions = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of clientList.data ?? []) m.set(c.id, c.name);
@@ -93,6 +104,12 @@ export default function Media() {
     return [...m].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   }, [clientList.data, items.data]);
   const summary = useQuery({ queryKey: ['media-summary'], queryFn: () => api.get<Summary>('/media/summary') });
+  // Scripts due in the weeks the calendar shows. Every script has a client, so "No client" shows none.
+  const calendarScripts = useQuery({
+    queryKey: ['media-scripts', 'calendar', from.toISOString(), client],
+    queryFn: () => api.get<Script[]>('/media-scripts', { from: from.toISOString(), to: to.toISOString(), client: client || undefined }),
+    enabled: (tab === 'calendar' || tab === 'scripts') && client !== 'none',
+  });
 
   // A notification links to /media?item=<id>.
   const openId = params.get('item');
@@ -107,7 +124,17 @@ export default function Media() {
   }, [openId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setTab = (v: Tab) => setParams(v === 'calendar' ? {} : { tab: v }, { replace: true });
+  // Shoots, Reels, Content, Images and Scripts are view-only calendars of one type; changes are made on Calendar.
+  const typeTab: Kind | 'script' | null = (KINDS as string[]).includes(tab) ? (tab as Kind) : tab === 'scripts' ? 'script' : null;
+  // Expenses without Super Admin, or an unknown tab, falls back to the calendar.
+  const view: Tab = tab === 'expenses' ? (money ? 'expenses' : 'calendar') : typeTab ? tab : 'calendar';
   const inMonth = (items.data ?? []).filter((i) => isSameMonth(new Date(i.scheduledAt), month));
+  const pickedClient = client && client !== 'none' ? clientOptions.find((c) => c.id === client) : undefined;
+  const newScript = (at?: Date) => {
+    const d = at ? new Date(at) : new Date();
+    if (at) d.setHours(10, 0, 0, 0);
+    setScript({ status: 'WRITTEN', scheduledAt: d.toISOString(), client: pickedClient });
+  };
   const newItem = (kind: Kind, at?: Date) => {
     const d = at ? new Date(at) : new Date();
     if (at) d.setHours(10, 0, 0, 0);
@@ -120,8 +147,9 @@ export default function Media() {
         title="Media"
         subtitle={seesAll ? 'Shoots, reels, content and image posts: when they happen and who is on each' : 'Media work assigned to you'}
         actions={<>
-          {money && tab === 'expenses' && <Button variant="secondary" onClick={() => setExpense({ category: 'MODEL', spentOn: format(new Date(), 'yyyy-MM-dd') })}><IndianRupee className="h-4 w-4" />Add expense</Button>}
-          {manage && <Button onClick={() => newItem((KINDS as string[]).includes(tab) ? (tab as Kind) : 'SHOOT')}><Plus className="h-4 w-4" />Add to schedule</Button>}
+          {money && view === 'expenses' && <Button variant="secondary" onClick={() => setExpense({ category: 'MODEL', spentOn: format(new Date(), 'yyyy-MM-dd') })}><IndianRupee className="h-4 w-4" />Add expense</Button>}
+          {view === 'calendar' && <Button variant={manage ? 'secondary' : 'primary'} onClick={() => newScript()}><FileText className="h-4 w-4" />New script</Button>}
+          {view === 'calendar' && manage && <Button onClick={() => newItem('SHOOT')}><Plus className="h-4 w-4" />Add to schedule</Button>}
         </>}
       />
 
@@ -132,9 +160,10 @@ export default function Media() {
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Tabs value={tab} onChange={setTab} tabs={[
+        <Tabs value={view} onChange={setTab} tabs={[
           { value: 'calendar', label: 'Calendar' },
-          ...KINDS.map((k) => ({ value: k as Tab, label: KIND[k].plural, count: !(KINDS as string[]).includes(tab) ? undefined : inMonth.filter((i) => i.kind === k).length })),
+          ...KINDS.map((k) => ({ value: k as Tab, label: KIND[k].plural, count: typeTab ? inMonth.filter((i) => i.kind === k).length : undefined })),
+          { value: 'scripts' as Tab, label: 'Scripts', count: typeTab ? (calendarScripts.data ?? []).filter((x) => isSameMonth(new Date(x.scheduledAt), month)).length : undefined },
           ...(money ? [{ value: 'expenses' as Tab, label: 'Expenses' }] : []),
         ]} />
         <div className="flex flex-wrap items-center gap-2">
@@ -144,17 +173,17 @@ export default function Media() {
             <Button size="sm" variant="secondary" onClick={() => setMonth(addMonths(month, 1))} aria-label="Next month"><ChevronRight className="h-4 w-4" /></Button>
             <Button size="sm" variant="ghost" onClick={() => setMonth(startOfMonth(new Date()))}>Today</Button>
           </div>
-          {seesAll && tab !== 'expenses' && (
+          {seesAll && view !== 'expenses' && view !== 'scripts' && (
             <Select value={assignee} onChange={(e) => setAssignee(e.target.value)} className="w-44" aria-label="Assigned to">
               <option value="">Everyone</option>
               <option value="me">Assigned to me</option>
               {dir.data?.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
             </Select>
           )}
-          {tab !== 'expenses' && (
+          {view !== 'expenses' && (
             <Select value={client} onChange={(e) => setClient(e.target.value)} className="w-44" aria-label="Client">
               <option value="">All clients</option>
-              <option value="none">Prisim's own</option>
+              {view !== 'scripts' && <option value="none">No client (older entries)</option>}
               {clientOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               {client && client !== 'none' && !clientOptions.some((c) => c.id === client) && <option value={client}>Selected client</option>}
             </Select>
@@ -162,30 +191,45 @@ export default function Media() {
         </div>
       </div>
 
-      {tab === 'expenses' ? (
+      {view === 'expenses' ? (
         <ExpensesTab month={month} onEdit={setExpense} />
-      ) : items.isLoading ? <Spinner /> : items.error ? <ErrorBox error={items.error} /> : tab === 'calendar' ? (
-        <Calendar month={month} from={from} to={to} items={items.data ?? []} onOpen={setEditing} onAdd={manage ? (kind, d) => newItem(kind, d) : undefined} />
+      ) : items.isLoading ? <Spinner /> : items.error ? <ErrorBox error={items.error} /> : typeTab ? (
+        <Calendar month={month} from={from} to={to} only={typeTab}
+          items={typeTab === 'script' ? [] : (items.data ?? []).filter((i) => i.kind === typeTab)}
+          scripts={typeTab === 'script' && client !== 'none' ? calendarScripts.data ?? [] : []}
+          onOpen={(i) => setEditing({ ...i, readOnly: true })} onOpenScript={(x) => setScript({ ...x, readOnly: true })} />
       ) : (
-        <KindList kind={tab} items={inMonth.filter((i) => i.kind === tab)} onOpen={setEditing} manage={manage} onAdd={() => newItem(tab)} />
+        <Calendar month={month} from={from} to={to} items={items.data ?? []} scripts={client === 'none' ? [] : calendarScripts.data ?? []}
+          onOpen={setEditing} onOpenScript={setScript} onAdd={manage ? (kind, d) => newItem(kind, d) : undefined} onAddScript={newScript} />
       )}
 
-      {editing && <ItemModal item={editing} onClose={() => setEditing(null)} onAddExpense={money ? (shoot) => setExpense({ category: 'MODEL', spentOn: shoot.scheduledAt.slice(0, 10), shoot: { id: shoot.id, title: shoot.title, scheduledAt: shoot.scheduledAt } }) : undefined} onSaved={() => invalidate(qc)} />}
+      {editing && <ItemModal item={editing} readOnly={!!editing.readOnly} costs={money} onClose={() => setEditing(null)} onAddExpense={money && !editing.readOnly ? (shoot) => setExpense({ category: 'MODEL', spentOn: shoot.scheduledAt.slice(0, 10), shoot: { id: shoot.id, title: shoot.title, scheduledAt: shoot.scheduledAt } }) : undefined} onSaved={() => invalidate(qc)} />}
       {expense && <ExpenseModal expense={expense} onClose={() => setExpense(null)} onSaved={() => invalidate(qc)} />}
+      {script && <ScriptModal script={script} readOnly={!!script.readOnly} clients={clientOptions} onClose={() => setScript(null)} onSaved={() => qc.invalidateQueries({ queryKey: ['media-scripts'] })} />}
     </div>
   );
 }
 
 // ───── Calendar ─────
 
-const byTime = (a: Item, b: Item) => a.scheduledAt.localeCompare(b.scheduledAt);
+/** Scripts on the calendar, next to the four kinds of schedule entry. */
+const SCRIPT_CHIP = { label: 'Script', plural: 'Scripts', icon: FileText, chip: 'bg-emerald-50 text-emerald-800 border-emerald-200', dot: 'bg-emerald-500' };
+/** One line on a calendar day: a schedule entry or a script. */
+type Entry = { type: 'item'; at: string; item: Item } | { type: 'script'; at: string; script: Script };
+const byTime = (a: Entry, b: Entry) => a.at.localeCompare(b.at);
 
-function Calendar({ month, from, to, items, onOpen, onAdd }: {
-  month: Date; from: Date; to: Date; items: Item[]; onOpen: (i: Item) => void; onAdd?: (kind: Kind, d: Date) => void;
+function Calendar({ month, from, to, items, scripts, onOpen, onOpenScript, onAdd, onAddScript, only }: {
+  month: Date; from: Date; to: Date; items: Item[]; scripts: Script[];
+  /** Show just this one type, view only: no type toggles, and no adding (the caller passes no onAdd). */
+  only?: Kind | 'script';
+  onOpen: (i: Item) => void; onOpenScript: (s: Script) => void;
+  onAdd?: (kind: Kind, d: Date) => void; onAddScript?: (d: Date) => void;
 }) {
   const [hidden, setHidden] = useState<Kind[]>([]);
+  const [hideScripts, setHideScripts] = useState(false);
   const [dayOpen, setDayOpen] = useState<Date | null>(null); // Day whose full list is open
   const [menuDay, setMenuDay] = useState<string | null>(null); // Day whose "add" menu is open
+  const canAdd = !!onAdd || !!onAddScript;
   useEffect(() => {
     if (!menuDay) return;
     const close = () => setMenuDay(null);
@@ -195,18 +239,35 @@ function Calendar({ month, from, to, items, onOpen, onAdd }: {
   }, [menuDay]);
   const days: Date[] = [];
   for (let d = from; d < to; d = addDays(d, 1)) days.push(d);
-  const shown = items.filter((i) => !hidden.includes(i.kind));
-  const onDay = (d: Date) => shown.filter((i) => isSameDay(new Date(i.scheduledAt), d)).sort(byTime);
+  const entries: Entry[] = [
+    ...items.filter((i) => !hidden.includes(i.kind)).map((item) => ({ type: 'item' as const, at: item.scheduledAt, item })),
+    ...(hideScripts ? [] : scripts.map((script) => ({ type: 'script' as const, at: script.scheduledAt, script }))),
+  ];
+  const onDay = (d: Date) => entries.filter((e) => isSameDay(new Date(e.at), d)).sort(byTime);
+  const open = (e: Entry) => (e.type === 'item' ? onOpen(e.item) : onOpenScript(e.script));
+  const chip = (on: boolean, c: { chip: string; dot: string }) => ({
+    className: clsx('flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition', on ? c.chip : 'border-slate-200 text-slate-400'),
+    dot: clsx('h-2 w-2 rounded-full', on ? c.dot : 'bg-slate-300'),
+  });
+  const sc = chip(!hideScripts, SCRIPT_CHIP);
   return (
     <Card>
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-2.5">
-        {KINDS.map((k) => (
-          <button key={k} onClick={() => setHidden(hidden.includes(k) ? hidden.filter((h) => h !== k) : [...hidden, k])}
-            className={clsx('flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition', hidden.includes(k) ? 'border-slate-200 text-slate-400' : KIND[k].chip)}>
-            <span className={clsx('h-2 w-2 rounded-full', hidden.includes(k) ? 'bg-slate-300' : KIND[k].dot)} />{KIND[k].plural}
-          </button>
-        ))}
-        <span className="ml-auto text-xs text-slate-400">{onAdd ? 'Use + on a day to schedule something. Click a date to see that day.' : 'Click a date to see that day.'}</span>
+        {only ? (() => {
+          const c = only === 'script' ? SCRIPT_CHIP : KIND[only];
+          return <span className={clsx('flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium', c.chip)}><span className={clsx('h-2 w-2 rounded-full', c.dot)} />{c.plural}</span>;
+        })() : <>{KINDS.map((k) => {
+          const c = chip(!hidden.includes(k), KIND[k]);
+          return (
+            <button key={k} onClick={() => setHidden(hidden.includes(k) ? hidden.filter((h) => h !== k) : [...hidden, k])} className={c.className}>
+              <span className={c.dot} />{KIND[k].plural}
+            </button>
+          );
+        })}
+        <button onClick={() => setHideScripts(!hideScripts)} className={sc.className}><span className={sc.dot} />{SCRIPT_CHIP.plural}</button></>}
+        <span className="ml-auto text-xs text-slate-400">
+          {only ? 'View only. Add and change entries on the Calendar tab.' : canAdd ? 'Use + on a day to schedule something. Click a date to see that day.' : 'Click a date to see that day.'}
+        </span>
       </div>
       <div className="scroll-thin overflow-x-auto">
         <div className="grid min-w-[760px] grid-cols-7">
@@ -217,11 +278,11 @@ function Calendar({ month, from, to, items, onOpen, onAdd }: {
             const list = onDay(d);
             const key = d.toISOString();
             return (
-              <div key={key} className={clsx('group relative min-h-28 border-b border-r border-slate-100 p-1.5', !isSameMonth(d, month) && 'bg-slate-50/70', onAdd && 'hover:bg-indigo-50/30')}>
+              <div key={key} className={clsx('group relative min-h-28 border-b border-r border-slate-100 p-1.5', !isSameMonth(d, month) && 'bg-slate-50/70', canAdd && 'hover:bg-indigo-50/30')}>
                 <div className="mb-1 flex items-center justify-between">
                   <button type="button" onClick={(ev) => { ev.stopPropagation(); setDayOpen(d); }} title="See this day"
                     className={clsx('flex h-6 w-6 items-center justify-center rounded-full text-xs', today ? 'bg-slate-900 font-semibold text-white' : isSameMonth(d, month) ? 'text-slate-700 hover:bg-slate-200' : 'text-slate-400 hover:bg-slate-200')}>{format(d, 'd')}</button>
-                  {onAdd && (
+                  {canAdd && (
                     <button type="button" aria-label={`Add on ${format(d, 'd MMMM')}`} title={`Add on ${format(d, 'd MMM')}`}
                       onClick={(e) => { e.stopPropagation(); setMenuDay(menuDay === key ? null : key); }}
                       className={clsx('flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-surface text-slate-500 shadow-sm transition hover:border-slate-400 hover:text-slate-900',
@@ -230,10 +291,10 @@ function Calendar({ month, from, to, items, onOpen, onAdd }: {
                     </button>
                   )}
                 </div>
-                {onAdd && menuDay === key && (
+                {canAdd && menuDay === key && (
                   <div onClick={(e) => e.stopPropagation()} className={clsx('absolute right-1.5 z-20 w-44', nearBottom ? 'bottom-9' : 'top-9', ' rounded-xl border border-slate-200 bg-surface p-1 shadow-xl')}>
                     <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{format(d, 'EEE d MMM')}</p>
-                    {KINDS.map((k) => {
+                    {onAdd && KINDS.map((k) => {
                       const I = KIND[k].icon;
                       return (
                         <button key={k} type="button" onClick={() => { setMenuDay(null); onAdd(k, d); }}
@@ -242,15 +303,28 @@ function Calendar({ month, from, to, items, onOpen, onAdd }: {
                         </button>
                       );
                     })}
+                    {onAddScript && (
+                      <button type="button" onClick={() => { setMenuDay(null); onAddScript(d); }}
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100">
+                        <span className={clsx('h-2 w-2 rounded-full', SCRIPT_CHIP.dot)} /><FileText className="h-4 w-4 text-slate-400" />{SCRIPT_CHIP.label}
+                      </button>
+                    )}
                   </div>
                 )}
                 <div className="space-y-1">
-                  {list.slice(0, MAX_PER_DAY).map((i) => (
-                    <button key={i.id} onClick={(e) => { e.stopPropagation(); onOpen(i); }}
-                      title={[`${KIND[i.kind].label}: ${i.title}`, i.assignee ? `With ${i.assignee.fullName}` : null, i.notes].filter(Boolean).join('\n')}
-                      className={clsx('block w-full truncate rounded-md border px-1.5 py-0.5 text-left text-[11px] leading-4', KIND[i.kind].chip, !isOpen(i.status) && 'opacity-60', i.status === 'CANCELLED' && 'line-through')}>
-                      <span className="font-semibold">{format(new Date(i.scheduledAt), 'h:mm')}</span> {i.title}
-                      {i.assignee && <span className="opacity-70"> · {i.assignee.fullName.split(' ')[0]}</span>}
+                  {list.slice(0, MAX_PER_DAY).map((e) => e.type === 'item' ? (
+                    <button key={e.item.id} onClick={(ev) => { ev.stopPropagation(); onOpen(e.item); }}
+                      title={[`${KIND[e.item.kind].label}: ${e.item.title}`, e.item.assignee ? `With ${e.item.assignee.fullName}` : null, e.item.notes].filter(Boolean).join('\n')}
+                      className={clsx('block w-full truncate rounded-md border px-1.5 py-0.5 text-left text-[11px] leading-4', KIND[e.item.kind].chip, !isOpen(e.item.status) && 'opacity-60', e.item.status === 'CANCELLED' && 'line-through')}>
+                      <span className="font-semibold">{format(new Date(e.item.scheduledAt), 'h:mm')}</span> {e.item.title}
+                      {e.item.assignee && <span className="opacity-70"> · {e.item.assignee.fullName.split(' ')[0]}</span>}
+                    </button>
+                  ) : (
+                    <button key={e.script.id} onClick={(ev) => { ev.stopPropagation(); onOpenScript(e.script); }}
+                      title={[`Script: ${e.script.title}`, e.script.client.name, SCRIPT_STATUS[e.script.status].label, `By ${e.script.writer.fullName}`].join('\n')}
+                      className={clsx('flex w-full items-center gap-1 truncate rounded-md border px-1.5 py-0.5 text-left text-[11px] leading-4', SCRIPT_CHIP.chip)}>
+                      {e.script.status === 'APPROVED' ? <CheckCircle2 className="h-3 w-3 shrink-0 text-green-600" aria-label="Approved by client" /> : <FileText className="h-3 w-3 shrink-0" aria-label="Written" />}
+                      <span className="truncate">{e.script.title}<span className="opacity-70"> · {e.script.client.name}</span></span>
                     </button>
                   ))}
                   {list.length > MAX_PER_DAY && (
@@ -266,31 +340,56 @@ function Calendar({ month, from, to, items, onOpen, onAdd }: {
         </div>
       </div>
       {dayOpen && (
-        <DayAgenda date={dayOpen} items={onDay(dayOpen)} onClose={() => setDayOpen(null)}
-          onOpen={(i) => { setDayOpen(null); onOpen(i); }}
-          onAdd={onAdd ? (k) => { const d = dayOpen; setDayOpen(null); onAdd(k, d); } : undefined} />
+        <DayAgenda date={dayOpen} entries={onDay(dayOpen)} onClose={() => setDayOpen(null)}
+          onOpen={(e) => { setDayOpen(null); open(e); }}
+          onAdd={onAdd ? (k) => { const d = dayOpen; setDayOpen(null); onAdd(k, d); } : undefined}
+          onAddScript={onAddScript ? () => { const d = dayOpen; setDayOpen(null); onAddScript(d); } : undefined} />
       )}
     </Card>
   );
 }
 
-/** Everything scheduled on one day, in time order, with what each one is about. */
-function DayAgenda({ date, items, onClose, onOpen, onAdd }: {
-  date: Date; items: Item[]; onClose: () => void; onOpen: (i: Item) => void; onAdd?: (kind: Kind) => void;
+/** Everything on one day, in time order, with what each one is about. */
+function DayAgenda({ date, entries, onClose, onOpen, onAdd, onAddScript }: {
+  date: Date; entries: Entry[]; onClose: () => void; onOpen: (e: Entry) => void; onAdd?: (kind: Kind) => void; onAddScript?: () => void;
 }) {
+  const adds = (onAdd || onAddScript) ? (
+    <div className="flex flex-wrap gap-2">
+      {onAdd && KINDS.map((k) => { const I = KIND[k].icon; return <Button key={k} size="sm" variant="secondary" onClick={() => onAdd(k)}><I className="h-3.5 w-3.5" />Add {KIND[k].label.toLowerCase()}</Button>; })}
+      {onAddScript && <Button size="sm" variant="secondary" onClick={onAddScript}><FileText className="h-3.5 w-3.5" />Add script</Button>}
+    </div>
+  ) : undefined;
   return (
-    <Modal open wide onClose={onClose} title={format(date, 'EEEE d MMMM yyyy')}
-      footer={onAdd ? <div className="flex flex-wrap gap-2">
-        {KINDS.map((k) => { const I = KIND[k].icon; return <Button key={k} size="sm" variant="secondary" onClick={() => onAdd(k)}><I className="h-3.5 w-3.5" />Add {KIND[k].label.toLowerCase()}</Button>; })}
-      </div> : undefined}>
-      {!items.length ? <p className="text-sm text-slate-500">Nothing scheduled on this day.</p> : (
+    <Modal open wide onClose={onClose} title={format(date, 'EEEE d MMMM yyyy')} footer={adds}>
+      {!entries.length ? <p className="text-sm text-slate-500">Nothing scheduled on this day.</p> : (
         <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200">
-          {items.map((i) => {
+          {entries.map((e) => {
+            const time = <div className="w-16 shrink-0 pt-0.5 text-sm font-semibold tabular-nums text-slate-700">{format(new Date(e.at), 'h:mm a')}</div>;
+            if (e.type === 'script') {
+              const s = e.script;
+              return (
+                <li key={`s-${s.id}`}>
+                  <button type="button" onClick={() => onOpen(e)} className="flex w-full gap-3 px-3 py-2.5 text-left hover:bg-slate-50">
+                    {time}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={clsx('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium', SCRIPT_CHIP.chip)}><FileText className="h-3 w-3" />Script</span>
+                        <span className="font-medium text-slate-900">{s.title}</span>
+                        <Badge className={SCRIPT_STATUS[s.status].color}>{SCRIPT_STATUS[s.status].label}</Badge>
+                      </div>
+                      <p className="mt-1 line-clamp-3 whitespace-pre-line text-sm text-slate-600">{s.body}</p>
+                      <p className="mt-1 text-xs text-slate-500">{s.client.name} · written by {s.writer.fullName}</p>
+                    </div>
+                  </button>
+                </li>
+              );
+            }
+            const i = e.item;
             const I = KIND[i.kind].icon;
             return (
-              <li key={i.id}>
-                <button type="button" onClick={() => onOpen(i)} className="flex w-full gap-3 px-3 py-2.5 text-left hover:bg-slate-50">
-                  <div className="w-16 shrink-0 pt-0.5 text-sm font-semibold tabular-nums text-slate-700">{format(new Date(i.scheduledAt), 'h:mm a')}</div>
+              <li key={`i-${i.id}`}>
+                <button type="button" onClick={() => onOpen(e)} className="flex w-full gap-3 px-3 py-2.5 text-left hover:bg-slate-50">
+                  {time}
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className={clsx('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium', KIND[i.kind].chip)}><I className="h-3 w-3" />{KIND[i.kind].label}</span>
@@ -312,78 +411,26 @@ function DayAgenda({ date, items, onClose, onOpen, onAdd }: {
   );
 }
 
-// ───── One list per kind ─────
-
-function KindList({ kind, items, onOpen, manage, onAdd }: { kind: Kind; items: Item[]; onOpen: (i: Item) => void; manage: boolean; onAdd: () => void }) {
-  const qc = useQueryClient();
-  const K = KIND[kind];
-  const setStatus = async (i: Item, status: Status) => {
-    try { await api.patch(`/media/${i.id}`, { status }); invalidate(qc); toast.success(`Marked ${statusLabel(i.kind, status).toLowerCase()}`); }
-    catch (e) { toast.error(errMsg(e)); }
-  };
-  if (!items.length) {
-    return <Card><Empty title={`No ${K.plural.toLowerCase()} this month`} icon={<K.icon className="h-8 w-8" />}>
-      {manage ? <Button className="mt-3" onClick={onAdd}><Plus className="h-4 w-4" />Add {K.label.toLowerCase()}</Button> : 'When something is scheduled for you it shows up here.'}
-    </Empty></Card>;
-  }
-  const now = new Date();
-  return (
-    <Card>
-      <Table>
-        <thead><tr>
-          <Th>When</Th><Th>{kind === 'CONTENT' ? 'Piece' : 'Title'}</Th><Th>Assigned to</Th>
-          {kind === 'SHOOT' ? <><Th>Location</Th><Th>Models</Th></> : <Th>Platform</Th>}
-          <Th>Client</Th><Th>Status</Th>
-        </tr></thead>
-        <tbody>
-          {items.map((i) => {
-            const late = isOpen(i.status) && new Date(i.scheduledAt) < now;
-            return (
-              <tr key={i.id} className="cursor-pointer hover:bg-slate-50" onClick={() => onOpen(i)}>
-                <Td className="whitespace-nowrap">
-                  <div className="font-medium">{format(new Date(i.scheduledAt), 'EEE d MMM')}</div>
-                  <div className={clsx('text-xs', late ? 'font-medium text-rose-600' : 'text-slate-500')}>{format(new Date(i.scheduledAt), 'h:mm a')}{late && ' · past date'}</div>
-                </Td>
-                <Td>
-                  <div className="font-medium text-slate-900">{i.title}</div>
-                  {i.link && <a href={i.link} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 text-xs text-indigo-700 hover:underline"><ExternalLink className="h-3 w-3" />Open link</a>}
-                </Td>
-                <Td>{i.assignee ? <span className="flex items-center gap-2"><Avatar name={i.assignee.fullName} size="sm" />{i.assignee.fullName}</span> : <span className="text-slate-400">Not assigned</span>}</Td>
-                {kind === 'SHOOT'
-                  ? <><Td className="text-slate-600">{i.location || '—'}</Td><Td className="max-w-48 truncate text-slate-600">{i.models || '—'}</Td></>
-                  : <Td className="text-slate-600">{i.platform || '—'}</Td>}
-                <Td className="text-slate-600">{i.client?.name ?? '—'}</Td>
-                <Td><div onClick={(e) => e.stopPropagation()}>
-                  {i.permissions.canUpdate ? (
-                    <Select value={i.status} onChange={(e) => setStatus(i, e.target.value as Status)} className="w-36 py-1 text-xs" aria-label="Status">
-                      {(Object.keys(MEDIA_STATUS) as Status[]).map((s) => <option key={s} value={s}>{statusLabel(kind, s)}</option>)}
-                    </Select>
-                  ) : <Badge className={MEDIA_STATUS[i.status].color}>{statusLabel(kind, i.status)}</Badge>}
-                </div></Td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </Table>
-    </Card>
-  );
-}
-
 // ───── Add / edit a schedule entry ─────
 
-function ItemModal({ item, onClose, onSaved, onAddExpense }: {
+function ItemModal({ item, onClose, onSaved, onAddExpense, readOnly = false, costs = false }: {
   item: Partial<Item>; onClose: () => void; onSaved: () => void; onAddExpense?: (shoot: Item) => void;
+  /** View only: nothing can be changed. */
+  readOnly?: boolean;
+  /** Show the shoot's expenses (Super Admins only). */
+  costs?: boolean;
 }) {
   const { can } = useAuth();
   const dir = useDirectory();
   const isNew = !item.id;
   const manage = can('media.manage');
-  const full = isNew || manage; // Assignees may only change status, link and notes.
+  const full = !readOnly && (isNew || manage); // Assignees may only change status, link and notes.
+  const locked = readOnly || (!isNew && !item.permissions?.canUpdate);
   const clients = useQuery({ queryKey: ['clients', '', ''], queryFn: () => api.get<{ id: string; name: string }[]>('/clients', {}), enabled: full, staleTime: 60_000 });
   const shootCosts = useQuery({
     queryKey: ['media-expenses', 'shoot', item.id],
     queryFn: () => api.get<Expenses>('/media-expenses', { shootId: item.id }),
-    enabled: !isNew && item.kind === 'SHOOT' && can('media.expenses'),
+    enabled: costs && !isNew && item.kind === 'SHOOT',
   });
   const [f, setF] = useState({
     kind: item.kind ?? 'SHOOT', title: item.title ?? '', when: item.scheduledAt ? toLocalInput(new Date(item.scheduledAt)) : '',
@@ -399,7 +446,7 @@ function ItemModal({ item, onClose, onSaved, onAddExpense }: {
     try {
       const body = full ? {
         kind: f.kind, title: f.title.trim(), scheduledAt: new Date(f.when).toISOString(), status: f.status,
-        assigneeId: f.assigneeId || null, clientId: f.clientId || null, platform: shoot ? null : f.platform || null,
+        assigneeId: f.assigneeId || null, clientId: f.clientId, platform: shoot ? null : f.platform || null,
         location: shoot ? f.location || null : null, models: shoot ? f.models || null : null, link: f.link || null, notes: f.notes || null,
       } : { status: f.status, link: f.link || null, notes: f.notes || null };
       if (isNew) await api.post('/media', body); else await api.patch(`/media/${item.id}`, body);
@@ -418,9 +465,9 @@ function ItemModal({ item, onClose, onSaved, onAddExpense }: {
   return (
     <Modal open wide onClose={onClose} title={isNew ? 'Add to the media schedule' : `${K.label}: ${item.title}`}
       footer={<>
-        {!isNew && manage && <Button variant="ghost" className="mr-auto text-rose-600 hover:bg-rose-50" onClick={remove} disabled={busy}><Trash2 className="h-4 w-4" />Delete</Button>}
-        <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button loading={busy} onClick={save} disabled={!item.permissions?.canUpdate && !isNew || (full && (f.title.trim().length < 2 || !f.when))}>{isNew ? 'Add' : 'Save'}</Button>
+        {!isNew && manage && !readOnly && <Button variant="ghost" className="mr-auto text-rose-600 hover:bg-rose-50" onClick={remove} disabled={busy}><Trash2 className="h-4 w-4" />Delete</Button>}
+        <Button variant="secondary" onClick={onClose}>{readOnly ? 'Close' : 'Cancel'}</Button>
+        {!readOnly && <Button loading={busy} onClick={save} disabled={!item.permissions?.canUpdate && !isNew || (full && (f.title.trim().length < 2 || !f.when || !f.clientId))}>{isNew ? 'Add' : 'Save'}</Button>}
       </>}>
       {full && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -455,25 +502,26 @@ function ItemModal({ item, onClose, onSaved, onAddExpense }: {
             <datalist id="media-platforms">{PLATFORMS.map((p) => <option key={p} value={p} />)}</datalist>
           </Field>
         )}
-        <Field label="Client (optional)">
-          <Select value={f.clientId} onChange={(e) => set({ clientId: e.target.value })} disabled={!full}>
-            <option value="">Prisim's own</option>
+        <Field label="Client *" hint={full && clients.data && !clients.data.length ? 'No clients yet. Add one on the Clients page first.' : undefined}>
+          <Select value={f.clientId} onChange={(e) => set({ clientId: e.target.value })} disabled={!full} required aria-required="true">
+            <option value="" disabled>Choose a client</option>
             {clients.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             {item.client && !clients.data?.some((c) => c.id === item.client!.id) && <option value={item.client.id}>{item.client.name}</option>}
           </Select>
         </Field>
         <Field label="Status">
-          <Select value={f.status} onChange={(e) => set({ status: e.target.value as Status })} disabled={!isNew && !item.permissions?.canUpdate}>
+          <Select value={f.status} onChange={(e) => set({ status: e.target.value as Status })} disabled={locked}>
             {(Object.keys(MEDIA_STATUS) as Status[]).map((s) => <option key={s} value={s}>{statusLabel(f.kind as Kind, s)}</option>)}
           </Select>
         </Field>
         <Field label={shoot ? 'Link (drive folder, call sheet)' : f.kind === 'CONTENT' ? 'Link to the draft' : 'Link to the post'}>
-          <Input value={f.link} onChange={(e) => set({ link: e.target.value })} disabled={!isNew && !item.permissions?.canUpdate} placeholder="https://…" />
+          <Input value={f.link} onChange={(e) => set({ link: e.target.value })} disabled={locked} placeholder="https://…" />
         </Field>
       </div>
-      <Field label="What happens"><Textarea rows={4} value={f.notes} onChange={(e) => set({ notes: e.target.value })} disabled={!isNew && !item.permissions?.canUpdate}
+      <Field label="What happens"><Textarea rows={4} value={f.notes} onChange={(e) => set({ notes: e.target.value })} disabled={locked}
         placeholder={shoot ? 'What is being shot, shot list, props, timings…' : f.kind === 'CONTENT' ? 'What the piece covers, brief, word count…' : 'What the post is about, caption, hashtags…'} /></Field>
-      {!full && <p className="text-xs text-slate-500">You can update the status, link and what happens. Ask a media manager to change the rest.</p>}
+      {readOnly && <p className="text-xs text-slate-500">View only. To change this, open it from the Calendar tab.</p>}
+      {!full && !readOnly && <p className="text-xs text-slate-500">You can update the status, link and what happens. Ask a media manager to change the rest.</p>}
 
       {!isNew && shoot && shootCosts.data && (
         <div className="rounded-xl border border-slate-200 p-3">
@@ -491,6 +539,87 @@ function ItemModal({ item, onClose, onSaved, onAddExpense }: {
           )}
           {shootCosts.data.totals.unpaid > 0 && <p className="mt-2 text-xs text-amber-700">{inr(shootCosts.data.totals.unpaid)} still to pay</p>}
         </div>
+      )}
+    </Modal>
+  );
+}
+
+// ───── Scripts ─────
+
+const SCRIPT_STATUS: Record<ScriptStatus, { label: string; hint: string; color: string }> = {
+  WRITTEN: { label: 'Written', hint: 'Ready, waiting for the client', color: 'bg-sky-100 text-sky-800' },
+  APPROVED: { label: 'Approved by client', hint: 'The client has signed it off', color: 'bg-green-100 text-green-800' },
+};
+
+function ScriptModal({ script, clients, onClose, onSaved, readOnly = false }: {
+  script: Partial<Script>; clients: { id: string; name: string }[]; onClose: () => void; onSaved: () => void;
+  /** View only: nothing can be changed. */
+  readOnly?: boolean;
+}) {
+  const isNew = !script.id;
+  const editable = !readOnly && (isNew || !!script.permissions?.canEdit);
+  const [f, setF] = useState({
+    title: script.title ?? '', body: script.body ?? '', clientId: script.client?.id ?? '', status: (script.status ?? 'WRITTEN') as ScriptStatus,
+    when: script.scheduledAt ? toLocalInput(new Date(script.scheduledAt)) : '',
+  });
+  const [busy, setBusy] = useState(false);
+  const set = (c: Partial<typeof f>) => setF({ ...f, ...c });
+  const valid = f.title.trim().length >= 2 && f.body.trim().length > 0 && !!f.clientId && !!f.when;
+  const save = async () => {
+    setBusy(true);
+    try {
+      const body = { title: f.title.trim(), body: f.body, clientId: f.clientId, scheduledAt: new Date(f.when).toISOString(), status: f.status };
+      if (isNew) await api.post('/media-scripts', body); else await api.patch(`/media-scripts/${script.id}`, body);
+      toast.success(isNew ? 'Script saved' : 'Script updated'); onSaved(); onClose();
+    } catch (e) { toast.error(errMsg(e)); } finally { setBusy(false); }
+  };
+  const remove = async () => {
+    if (!confirm('Delete this script?')) return;
+    setBusy(true);
+    try { await api.del(`/media-scripts/${script.id}`); toast.success('Script deleted'); onSaved(); onClose(); }
+    catch (e) { toast.error(errMsg(e)); setBusy(false); }
+  };
+  return (
+    <Modal open wide onClose={onClose} title={isNew ? 'New script' : script.title ?? 'Script'}
+      footer={<>
+        {!isNew && editable && <Button variant="ghost" className="mr-auto text-rose-600 hover:bg-rose-50" onClick={remove} disabled={busy}><Trash2 className="h-4 w-4" />Delete</Button>}
+        <Button variant="secondary" onClick={onClose}>{editable ? 'Cancel' : 'Close'}</Button>
+        {editable && <Button loading={busy} disabled={!valid} onClick={save}>{isNew ? 'Save script' : 'Save'}</Button>}
+      </>}>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Title"><Input value={f.title} onChange={(e) => set({ title: e.target.value })} disabled={!editable} autoFocus={isNew} placeholder="e.g. Diwali offer reel, 30 sec" /></Field>
+        <Field label="Client *" hint={editable && !clients.length ? 'No clients yet. Add one on the Clients page first.' : undefined}>
+          <Select value={f.clientId} onChange={(e) => set({ clientId: e.target.value })} disabled={!editable} required aria-required="true">
+            <option value="" disabled>Choose a client</option>
+            {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {script.client && !clients.some((c) => c.id === script.client!.id) && <option value={script.client.id}>{script.client.name}</option>}
+          </Select>
+        </Field>
+      </div>
+      <Field label="Due date *" className="sm:max-w-xs"><Input type="datetime-local" value={f.when} onChange={(e) => set({ when: e.target.value })} disabled={!editable} /></Field>
+      <Field label="Script *">
+        <Textarea rows={14} value={f.body} onChange={(e) => set({ body: e.target.value })} disabled={!editable} className="font-mono text-sm leading-relaxed"
+          placeholder={'Scene 1: Opening shot of the store front…\nVoice-over: "This Diwali…"\n\nScene 2: …'} />
+      </Field>
+      <div>
+        <p className="mb-1.5 text-sm font-medium text-slate-700">Status *</p>
+        <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Status">
+          {(Object.keys(SCRIPT_STATUS) as ScriptStatus[]).map((k) => (
+            <button key={k} type="button" role="radio" aria-checked={f.status === k} disabled={!editable} onClick={() => set({ status: k })}
+              className={clsx('flex items-start gap-2 rounded-xl border px-3 py-2.5 text-left transition disabled:cursor-not-allowed',
+                f.status === k ? 'border-slate-900 bg-slate-50 ring-1 ring-slate-900' : 'border-slate-200 hover:bg-slate-50')}>
+              {k === 'APPROVED' ? <CheckCircle2 className={clsx('mt-0.5 h-4 w-4 shrink-0', f.status === k ? 'text-green-600' : 'text-slate-400')} />
+                : <PenLine className={clsx('mt-0.5 h-4 w-4 shrink-0', f.status === k ? 'text-sky-600' : 'text-slate-400')} />}
+              <span><span className="block text-sm font-medium text-slate-900">{SCRIPT_STATUS[k].label}</span><span className="block text-xs text-slate-500">{SCRIPT_STATUS[k].hint}</span></span>
+            </button>
+          ))}
+        </div>
+      </div>
+      {!isNew && (
+        <p className="text-xs text-slate-500">
+          Written by {script.writer?.fullName}{script.approvedAt ? ` · approved ${format(new Date(script.approvedAt), 'd MMM yyyy')}` : ''}
+          {readOnly ? ' · View only. To change it, open it from the Calendar tab.' : !editable && ' · Only the writer or a media manager can change it.'}
+        </p>
       )}
     </Modal>
   );

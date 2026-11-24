@@ -7,7 +7,7 @@ import { Transform } from 'class-transformer';
 import {
   IsBoolean, IsDateString, IsEnum, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateIf,
 } from 'class-validator';
-import { MediaExpenseCategory, MediaKind, MediaStatus, Prisma } from '@prisma/client';
+import { MediaExpenseCategory, MediaKind, MediaScriptStatus, MediaStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { AuthUser, CurrentUser, RequireAny } from '../common/current-user';
@@ -33,7 +33,8 @@ class CreateItemDto {
   @IsDateString() scheduledAt: string;
   @IsOptional() @IsEnum(MediaStatus) status?: MediaStatus;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() assigneeId?: string | null;
-  @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() clientId?: string | null;
+  /** Every schedule entry is for a client. */
+  @IsUUID('all', { message: 'Choose the client this is for' }) clientId: string;
   @OptText(60) platform?: string | null;
   @OptText(300) location?: string | null;
   @OptText(500) models?: string | null;
@@ -47,7 +48,8 @@ class UpdateItemDto {
   @IsOptional() @IsDateString() scheduledAt?: string;
   @IsOptional() @IsEnum(MediaStatus) status?: MediaStatus;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() assigneeId?: string | null;
-  @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() clientId?: string | null;
+  /** Can be changed to another client, but not removed. */
+  @ValidateIf((_, v) => v !== undefined) @IsUUID('all', { message: 'Choose the client this is for' }) clientId?: string;
   @OptText(60) platform?: string | null;
   @OptText(300) location?: string | null;
   @OptText(500) models?: string | null;
@@ -84,7 +86,34 @@ class UpdateExpenseDto {
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() shootId?: string | null;
 }
 
+class ScriptQuery {
+  @IsOptional() @IsDateString() from?: string;
+  @IsOptional() @IsDateString() to?: string;
+  @IsOptional() @IsUUID() client?: string;
+  @IsOptional() @IsEnum(MediaScriptStatus) status?: MediaScriptStatus;
+  @IsOptional() @IsString() @MaxLength(100) search?: string;
+}
+
+class ScriptDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value)) @IsString() @MinLength(2) @MaxLength(200) title: string;
+  @IsString() @MinLength(1, { message: 'Write the script first' }) @MaxLength(50_000) body: string;
+  @IsUUID('all', { message: 'Choose the client this script is for' }) clientId: string;
+  /** Due date and time; the script shows on the Media calendar on this day. */
+  @IsDateString({}, { message: 'Pick the date the script is due' }) scheduledAt: string;
+  @IsOptional() @IsEnum(MediaScriptStatus) status?: MediaScriptStatus;
+}
+
+class UpdateScriptDto {
+  @IsOptional() @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value)) @IsString() @MinLength(2) @MaxLength(200) title?: string;
+  @IsOptional() @IsString() @MinLength(1, { message: 'The script cannot be empty' }) @MaxLength(50_000) body?: string;
+  /** Can move to another client, but never to none. */
+  @ValidateIf((_, v) => v !== undefined) @IsUUID('all', { message: 'Choose the client this script is for' }) clientId?: string;
+  @ValidateIf((_, v) => v !== undefined) @IsDateString({}, { message: 'Pick the date the script is due' }) scheduledAt?: string;
+  @IsOptional() @IsEnum(MediaScriptStatus) status?: MediaScriptStatus;
+}
+
 const person = { select: { id: true, fullName: true } } as const;
+const scriptInclude = { client: { select: { id: true, name: true } }, writer: person } satisfies Prisma.MediaScriptInclude;
 const itemInclude = {
   assignee: person,
   createdBy: person,
@@ -156,7 +185,7 @@ export class MediaService {
     const i = await this.prisma.mediaItem.create({
       data: {
         kind: dto.kind, title: dto.title.trim(), scheduledAt: new Date(dto.scheduledAt), status: dto.status ?? 'PLANNED',
-        assigneeId: dto.assigneeId ?? null, clientId: dto.clientId ?? null, platform: dto.platform, location: dto.location,
+        assigneeId: dto.assigneeId ?? null, clientId: dto.clientId, platform: dto.platform, location: dto.location,
         models: dto.models, link: dto.link, notes: dto.notes, createdById: u.id,
       },
       include: itemInclude,
@@ -206,12 +235,18 @@ export class MediaService {
   }
 
   // ───── Expenses ─────
+  // Super Admins only, whatever the role's permissions say.
+
+  private assertSuperAdmin(u: AuthUser) {
+    if (!u.roleKeys.includes('super_admin')) throw new ForbiddenException('Media expenses are for Super Admins only');
+  }
 
   private async checkShoot(shootId?: string | null) {
     if (shootId && !(await this.prisma.mediaItem.count({ where: { id: shootId, kind: 'SHOOT' } }))) throw new BadRequestException('That shoot does not exist');
   }
 
-  async expenses(q: ExpenseQuery) {
+  async expenses(u: AuthUser, q: ExpenseQuery) {
+    this.assertSuperAdmin(u);
     const where: Prisma.MediaExpenseWhereInput = {
       ...(q.category ? { category: q.category } : {}),
       ...(q.shootId ? { shootId: q.shootId } : {}),
@@ -228,6 +263,7 @@ export class MediaService {
   }
 
   async createExpense(u: AuthUser, dto: ExpenseDto) {
+    this.assertSuperAdmin(u);
     await this.checkShoot(dto.shootId);
     const paid = dto.paid ?? false;
     const e = await this.prisma.mediaExpense.create({
@@ -241,6 +277,7 @@ export class MediaService {
   }
 
   async updateExpense(u: AuthUser, id: string, dto: UpdateExpenseDto) {
+    this.assertSuperAdmin(u);
     const before = await this.prisma.mediaExpense.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Expense not found');
     await this.checkShoot(dto.shootId);
@@ -261,10 +298,75 @@ export class MediaService {
   }
 
   async removeExpense(u: AuthUser, id: string) {
+    this.assertSuperAdmin(u);
     const e = await this.prisma.mediaExpense.findUnique({ where: { id } });
     if (!e) throw new NotFoundException('Expense not found');
     await this.prisma.mediaExpense.delete({ where: { id } });
     await this.audit.record({ actorId: u.id, action: 'media.expense.deleted', entityType: 'media_expense', entityId: id, before: { payee: e.payee, amount: Number(e.amount), category: e.category } });
+    return { deleted: true };
+  }
+
+  // ───── Scripts ─────
+  // Anyone can write a script. Writers see and edit their own; view-all sees every script; managers edit any.
+
+  private decorateScript(u: AuthUser, s: Prisma.MediaScriptGetPayload<{ include: typeof scriptInclude }>) {
+    const canEdit = this.manages(u) || s.writerId === u.id;
+    return { ...s, permissions: { canEdit } };
+  }
+
+  private async findScript(u: AuthUser, id: string) {
+    const s = await this.prisma.mediaScript.findFirst({ where: { id, ...(this.seesAll(u) ? {} : { writerId: u.id }) } });
+    if (!s) throw new NotFoundException('Script not found');
+    if (!this.manages(u) && s.writerId !== u.id) throw new ForbiddenException('Only the writer, or a media manager, can change this script');
+    return s;
+  }
+
+  async scripts(u: AuthUser, q: ScriptQuery) {
+    const and: Prisma.MediaScriptWhereInput[] = [this.seesAll(u) ? {} : { writerId: u.id }];
+    if (q.from) and.push({ scheduledAt: { gte: new Date(q.from) } });
+    if (q.to) and.push({ scheduledAt: { lt: new Date(q.to) } });
+    if (q.client) and.push({ clientId: q.client });
+    if (q.status) and.push({ status: q.status });
+    if (q.search?.trim()) {
+      const s = { contains: q.search.trim(), mode: 'insensitive' as const };
+      and.push({ OR: [{ title: s }, { body: s }] });
+    }
+    const rows = await this.prisma.mediaScript.findMany({ where: { AND: and }, include: scriptInclude, orderBy: { updatedAt: 'desc' }, take: 1000 });
+    return rows.map((s) => this.decorateScript(u, s));
+  }
+
+  async createScript(u: AuthUser, dto: ScriptDto) {
+    await this.checkLinks({ clientId: dto.clientId });
+    const status = dto.status ?? 'WRITTEN';
+    const s = await this.prisma.mediaScript.create({
+      data: { title: dto.title, body: dto.body, clientId: dto.clientId, scheduledAt: new Date(dto.scheduledAt), status, approvedAt: status === 'APPROVED' ? new Date() : null, writerId: u.id },
+      include: scriptInclude,
+    });
+    await this.audit.record({ actorId: u.id, action: 'media.script.created', entityType: 'media_script', entityId: s.id, after: { title: s.title, clientId: s.clientId, scheduledAt: s.scheduledAt, status } });
+    return this.decorateScript(u, s);
+  }
+
+  async updateScript(u: AuthUser, id: string, dto: UpdateScriptDto) {
+    const before = await this.findScript(u, id);
+    await this.checkLinks({ clientId: dto.clientId });
+    // Approval time is when it was first marked approved; going back to Written clears it.
+    const approvedAt = dto.status === 'APPROVED' && before.status !== 'APPROVED' ? new Date() : dto.status === 'WRITTEN' ? null : undefined;
+    const s = await this.prisma.mediaScript.update({
+      where: { id },
+      data: { title: dto.title, body: dto.body, clientId: dto.clientId, scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : undefined, status: dto.status, approvedAt },
+      include: scriptInclude,
+    });
+    const keys = ['title', 'clientId', 'scheduledAt', 'status'] as const;
+    const changed: Record<string, unknown> = Object.fromEntries(keys.filter((k) => String(before[k]) !== String(s[k])).map((k) => [k, { from: before[k], to: s[k] }]));
+    if (before.body !== s.body) changed.body = 'edited';
+    if (Object.keys(changed).length) await this.audit.record({ actorId: u.id, action: 'media.script.updated', entityType: 'media_script', entityId: id, after: changed as Prisma.InputJsonValue });
+    return this.decorateScript(u, s);
+  }
+
+  async removeScript(u: AuthUser, id: string) {
+    const s = await this.findScript(u, id);
+    await this.prisma.mediaScript.delete({ where: { id } });
+    await this.audit.record({ actorId: u.id, action: 'media.script.deleted', entityType: 'media_script', entityId: id, before: { title: s.title, clientId: s.clientId, status: s.status } });
     return { deleted: true };
   }
 }
@@ -281,10 +383,15 @@ export class MediaController {
   @Patch('media/:id') update(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateItemDto) { return this.svc.update(u, id, dto); }
   @Delete('media/:id') @RequireAny('media.manage') remove(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.svc.remove(u, id); }
 
-  @Get('media-expenses') @RequireAny('media.expenses') expenses(@Query() q: ExpenseQuery) { return this.svc.expenses(q); }
-  @Post('media-expenses') @RequireAny('media.expenses') createExpense(@CurrentUser() u: AuthUser, @Body() dto: ExpenseDto) { return this.svc.createExpense(u, dto); }
-  @Patch('media-expenses/:id') @RequireAny('media.expenses') updateExpense(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateExpenseDto) { return this.svc.updateExpense(u, id, dto); }
-  @Delete('media-expenses/:id') @RequireAny('media.expenses') removeExpense(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.svc.removeExpense(u, id); }
+  @Get('media-scripts') scripts(@CurrentUser() u: AuthUser, @Query() q: ScriptQuery) { return this.svc.scripts(u, q); }
+  @Post('media-scripts') createScript(@CurrentUser() u: AuthUser, @Body() dto: ScriptDto) { return this.svc.createScript(u, dto); }
+  @Patch('media-scripts/:id') updateScript(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateScriptDto) { return this.svc.updateScript(u, id, dto); }
+  @Delete('media-scripts/:id') removeScript(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.svc.removeScript(u, id); }
+
+  @Get('media-expenses') expenses(@CurrentUser() u: AuthUser, @Query() q: ExpenseQuery) { return this.svc.expenses(u, q); }
+  @Post('media-expenses') createExpense(@CurrentUser() u: AuthUser, @Body() dto: ExpenseDto) { return this.svc.createExpense(u, dto); }
+  @Patch('media-expenses/:id') updateExpense(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateExpenseDto) { return this.svc.updateExpense(u, id, dto); }
+  @Delete('media-expenses/:id') removeExpense(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.svc.removeExpense(u, id); }
 }
 
 @Module({ providers: [MediaService], controllers: [MediaController] })

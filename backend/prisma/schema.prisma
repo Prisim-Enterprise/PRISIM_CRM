@@ -71,6 +71,7 @@ model User {
   mediaAssigned         MediaItem[]          @relation("MediaAssignee")
   mediaCreated          MediaItem[]          @relation("MediaCreator")
   mediaExpenses         MediaExpense[]
+  mediaScripts          MediaScript[]
   seoAccountsCreated    SeoAccount[]
   seoAssignments        SeoAssignee[]
   seoUpdates            SeoUpdate[]
@@ -619,6 +620,7 @@ model Client {
   createdBy        User              @relation("ClientCreator", fields: [createdById], references: [id])
   works            ClientWork[]
   mediaItems       MediaItem[]
+  mediaScripts     MediaScript[]
   postingPeriods   PostingPeriod[]
   tasks            TaskClient[]
   quotations       Quotation[]
@@ -878,6 +880,33 @@ model MediaExpense {
   @@index([spentOn])
   @@index([shootId])
   @@map("media_expenses")
+}
+
+enum MediaScriptStatus {
+  WRITTEN
+  APPROVED
+}
+
+/// A script a writer has prepared for a client, and whether the client has approved it.
+model MediaScript {
+  id          String            @id @default(uuid()) @db.Uuid
+  title       String
+  body        String
+  /// When the script is due; it shows on the Media calendar on this day.
+  scheduledAt DateTime
+  status      MediaScriptStatus @default(WRITTEN)
+  approvedAt  DateTime?
+  clientId    String            @db.Uuid
+  client      Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  writerId    String            @db.Uuid
+  writer      User              @relation(fields: [writerId], references: [id])
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([scheduledAt])
+  @@index([clientId])
+  @@index([writerId])
+  @@map("media_scripts")
 }
 
 // ───── SEO: who handles which client, and their daily updates ─────
