@@ -6,12 +6,12 @@ export const JOBS_KEY = 'jobs';
 /** Ticks arrive every minute; after this long without one, reminders and syncs have stopped. */
 export const TICK_STALE_MS = 5 * 60_000;
 
-export type JobName = 'followUps' | 'leadAlerts' | 'leadSync' | 'overdueTasks' | 'purgeMessages' | 'postingCalendar' | 'reconcile';
+export type JobName = 'followUps' | 'leadAlerts' | 'leadSync' | 'overdueTasks' | 'purgeMessages' | 'reconcile';
 
 /** Which jobs a tick at this moment should run. */
 export function jobsDue(now: Date): JobName[] {
   const jobs: JobName[] = ['followUps', 'leadAlerts', 'leadSync'];
-  if (now.getUTCMinutes() % 10 === 0) jobs.push('overdueTasks', 'purgeMessages', 'postingCalendar');
+  if (now.getUTCMinutes() % 10 === 0) jobs.push('overdueTasks', 'purgeMessages');
   if (now.getUTCHours() === 21 && now.getUTCMinutes() === 0) jobs.push('reconcile'); // 02:30 IST
   return jobs;
 }

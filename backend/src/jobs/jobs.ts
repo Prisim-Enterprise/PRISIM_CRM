@@ -8,8 +8,6 @@ import { FollowUpReminders, FollowUpsModule } from '../follow-ups/follow-ups';
 import { IntegrationsModule, LeadSyncService } from '../integrations/integrations';
 import { TaskReminders, TasksModule } from '../tasks/tasks';
 import { MessagesModule, MessagesService } from '../messages/messages';
-import { PostingModule, PostingService } from '../clients/posting';
-import { PostingSheetService } from '../clients/posting-sheet';
 import { NotificationsService } from '../notifications/notifications';
 import { AlertsModule, LeadAlerts } from '../alerts/alerts';
 import { JOBS_KEY, jobsDue, QUICK_JOBS_EVERY_MS, QUICK_JOBS_KEY } from './heartbeat';
@@ -51,7 +49,7 @@ export class JobsController {
   private log = new Logger('Jobs');
   constructor(
     private prisma: PrismaService, private followUps: FollowUpReminders, private tasks: TaskReminders, private sync: LeadSyncService,
-    private messages: MessagesService, private posting: PostingService, private postingSheet: PostingSheetService, private leadAlerts: LeadAlerts,
+    private messages: MessagesService, private leadAlerts: LeadAlerts,
   ) {}
 
   @Public()
@@ -69,7 +67,6 @@ export class JobsController {
       leadSync: () => this.sync.scheduled(),
       overdueTasks: () => this.tasks.overdue(),
       purgeMessages: () => this.messages.purge(),
-      postingCalendar: () => this.postingSheet.sync().then(() => this.posting.remind()),
       reconcile: () => this.sync.reconcile(),
     };
     const names = jobsDue(now);
@@ -84,5 +81,5 @@ export class JobsController {
   }
 }
 
-@Module({ imports: [FollowUpsModule, TasksModule, IntegrationsModule, MessagesModule, PostingModule, AlertsModule], controllers: [JobsController], providers: [QuickJobs] })
+@Module({ imports: [FollowUpsModule, TasksModule, IntegrationsModule, MessagesModule, AlertsModule], controllers: [JobsController], providers: [QuickJobs] })
 export class JobsModule {}

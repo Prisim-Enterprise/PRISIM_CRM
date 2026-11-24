@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
   addDays, addMonths, endOfMonth, format, isSameDay, isSameMonth, startOfMonth, startOfWeek,
 } from 'date-fns';
-import { Camera, ChevronLeft, ChevronRight, Clapperboard, ExternalLink, Flag, FlagOff, Image, IndianRupee, PenLine, Plus, Trash2 } from 'lucide-react';
+import { Camera, ChevronLeft, ChevronRight, Clapperboard, ExternalLink, Image, IndianRupee, PenLine, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errMsg } from '../lib/api';
-import { ClientPostingTab } from '../components/PostingCalendar';
 import { useAuth } from '../lib/auth';
 import { useDirectory } from '../lib/hooks';
 import { toLocalInput } from '../lib/format';
@@ -59,35 +58,9 @@ const inr = (n: number) => '₹' + n.toLocaleString('en-IN', { maximumFractionDi
 const isOpen = (s: Status) => s !== 'DONE' && s !== 'CANCELLED';
 const invalidate = (qc: ReturnType<typeof useQueryClient>) => { for (const k of ['media', 'media-summary', 'media-expenses']) qc.invalidateQueries({ queryKey: [k] }); };
 
-type Tab = 'calendar' | Kind | 'posting' | 'expenses';
-
-/** An entry from a client's posting calendar, shown on the Media calendar. */
-interface PostingEvent {
-  date: string; type: 'LEAD_START' | 'LEAD_END' | 'SHOOT' | 'VIDEO' | 'POSTER';
-  clientId: string; client: string; label: string | null; status: 'NONE' | 'NOT_YET' | 'DONE' | null; slotId?: string;
-}
-type PostingFeed = { today: string; canEdit?: boolean; events: PostingEvent[] };
-
-/** Every client keeps one colour on the calendar. */
-const CLIENT_COLORS = ['bg-teal-500', 'bg-sky-500', 'bg-violet-500', 'bg-amber-500', 'bg-rose-500', 'bg-emerald-600', 'bg-indigo-500', 'bg-orange-500', 'bg-fuchsia-500', 'bg-cyan-600'];
-const clientColor = (id: string) => CLIENT_COLORS[[...id].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) % CLIENT_COLORS.length];
-type Mark = 'done' | 'todo' | 'late';
-const markOf = (e: PostingEvent, today: string): Mark => (e.status === 'DONE' ? 'done' : e.date < today ? 'late' : 'todo');
-const MARK: Record<Mark, { dot: string; label: string; pill: string }> = {
-  done: { dot: 'bg-green-500', label: 'Done', pill: 'bg-green-100 text-green-800' },
-  todo: { dot: 'bg-amber-400', label: 'To do', pill: 'bg-amber-100 text-amber-800' },
-  late: { dot: 'bg-rose-500', label: 'Overdue', pill: 'bg-rose-100 text-rose-700' },
-};
-/** A day's posting events, one group per client. */
-function byClient(events: PostingEvent[]) {
-  const m = new Map<string, { clientId: string; client: string; events: PostingEvent[] }>();
-  for (const e of events) {
-    if (!m.has(e.clientId)) m.set(e.clientId, { clientId: e.clientId, client: e.client, events: [] });
-    m.get(e.clientId)!.events.push(e);
-  }
-  return [...m.values()].sort((a, b) => a.client.localeCompare(b.client));
-}
-const POSTING_ORDER: Record<PostingEvent['type'], number> = { LEAD_START: 0, SHOOT: 1, VIDEO: 2, POSTER: 3, LEAD_END: 4 };
+type Tab = 'calendar' | Kind | 'expenses';
+/** How many entries a calendar day shows before "+N more". */
+const MAX_PER_DAY = 3;
 
 export default function Media() {
   const { can } = useAuth();
@@ -111,12 +84,6 @@ export default function Media() {
     queryFn: () => api.get<Item[]>('/media', { from: from.toISOString(), to: to.toISOString(), assignee: assignee || undefined }),
   });
   const summary = useQuery({ queryKey: ['media-summary'], queryFn: () => api.get<Summary>('/media/summary') });
-  const seesPosting = can('clients.posting', 'clients.manage', 'clients.view.all');
-  const posting = useQuery({
-    queryKey: ['posting-calendar', format(from, 'yyyy-MM-dd')],
-    queryFn: () => api.get<PostingFeed>('/posting/calendar', { from: format(from, 'yyyy-MM-dd'), to: format(addDays(to, -1), 'yyyy-MM-dd') }),
-    enabled: seesPosting,
-  });
 
   // A notification links to /media?item=<id>.
   const openId = params.get('item');
@@ -159,10 +126,9 @@ export default function Media() {
         <Tabs value={tab} onChange={setTab} tabs={[
           { value: 'calendar', label: 'Calendar' },
           ...KINDS.map((k) => ({ value: k as Tab, label: KIND[k].plural, count: !(KINDS as string[]).includes(tab) ? undefined : inMonth.filter((i) => i.kind === k).length })),
-          ...(seesPosting ? [{ value: 'posting' as Tab, label: 'Client schedules' }] : []),
           ...(money ? [{ value: 'expenses' as Tab, label: 'Expenses' }] : []),
         ]} />
-        {tab !== 'posting' && <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1">
             <Button size="sm" variant="secondary" onClick={() => setMonth(addMonths(month, -1))} aria-label="Previous month"><ChevronLeft className="h-4 w-4" /></Button>
             <span className="w-32 text-center text-sm font-semibold">{format(month, 'MMMM yyyy')}</span>
@@ -176,17 +142,13 @@ export default function Media() {
               {dir.data?.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
             </Select>
           )}
-        </div>}
+        </div>
       </div>
 
-      {tab === 'posting' ? (
-        <ClientPostingTab clientId={params.get('client')} onPick={(c) => setParams(c ? { tab: 'posting', client: c } : { tab: 'posting' }, { replace: true })} />
-      ) : tab === 'expenses' ? (
+      {tab === 'expenses' ? (
         <ExpensesTab month={month} onEdit={setExpense} />
       ) : items.isLoading ? <Spinner /> : items.error ? <ErrorBox error={items.error} /> : tab === 'calendar' ? (
-        <Calendar month={month} from={from} to={to} items={items.data ?? []} onOpen={setEditing} onAdd={manage ? (kind, d) => newItem(kind, d) : undefined}
-          posting={seesPosting ? posting.data : undefined}
-          onPostingChanged={() => { posting.refetch(); qc.invalidateQueries({ queryKey: ['posting-overview'] }); qc.invalidateQueries({ queryKey: ['posting-due'] }); }} />
+        <Calendar month={month} from={from} to={to} items={items.data ?? []} onOpen={setEditing} onAdd={manage ? (kind, d) => newItem(kind, d) : undefined} />
       ) : (
         <KindList kind={tab} items={inMonth.filter((i) => i.kind === tab)} onOpen={setEditing} manage={manage} onAdd={() => newItem(tab)} />
       )}
@@ -199,14 +161,13 @@ export default function Media() {
 
 // ───── Calendar ─────
 
-function Calendar({ month, from, to, items, onOpen, onAdd, posting, onPostingChanged }: {
+const byTime = (a: Item, b: Item) => a.scheduledAt.localeCompare(b.scheduledAt);
+
+function Calendar({ month, from, to, items, onOpen, onAdd }: {
   month: Date; from: Date; to: Date; items: Item[]; onOpen: (i: Item) => void; onAdd?: (kind: Kind, d: Date) => void;
-  posting?: PostingFeed; onPostingChanged?: () => void;
 }) {
   const [hidden, setHidden] = useState<Kind[]>([]);
-  const [showPosting, setShowPosting] = useState(true);
-  const [dayOpen, setDayOpen] = useState<string | null>(null); // yyyy-MM-dd whose full list is open
-  const MAX_CLIENTS = 3;
+  const [dayOpen, setDayOpen] = useState<Date | null>(null); // Day whose full list is open
   const [menuDay, setMenuDay] = useState<string | null>(null); // Day whose "add" menu is open
   useEffect(() => {
     if (!menuDay) return;
@@ -218,6 +179,7 @@ function Calendar({ month, from, to, items, onOpen, onAdd, posting, onPostingCha
   const days: Date[] = [];
   for (let d = from; d < to; d = addDays(d, 1)) days.push(d);
   const shown = items.filter((i) => !hidden.includes(i.kind));
+  const onDay = (d: Date) => shown.filter((i) => isSameDay(new Date(i.scheduledAt), d)).sort(byTime);
   return (
     <Card>
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-2.5">
@@ -227,21 +189,7 @@ function Calendar({ month, from, to, items, onOpen, onAdd, posting, onPostingCha
             <span className={clsx('h-2 w-2 rounded-full', hidden.includes(k) ? 'bg-slate-300' : KIND[k].dot)} />{KIND[k].plural}
           </button>
         ))}
-        {posting && (
-          <button onClick={() => setShowPosting(!showPosting)} aria-pressed={showPosting}
-            title="Lead start and end, shoot dates, and each client's reels and AI posters from their posting calendar"
-            className={clsx('flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition', showPosting ? 'border-teal-200 bg-teal-50 text-teal-800' : 'border-slate-200 text-slate-400')}>
-            <span className={clsx('h-2 w-2 rounded-full', showPosting ? 'bg-teal-500' : 'bg-slate-300')} />Client posting
-          </button>
-        )}
-        {posting && showPosting && (
-          <span className="flex items-center gap-2.5 text-[11px] text-slate-500">
-            {(['done', 'todo', 'late'] as Mark[]).map((m) => <span key={m} className="flex items-center gap-1"><span className={clsx('h-2 w-2 rounded-full', MARK[m].dot)} />{MARK[m].label}</span>)}
-            <span className="hidden items-center gap-1 sm:flex"><Clapperboard className="h-3 w-3" />Reel</span>
-            <span className="hidden items-center gap-1 sm:flex"><Image className="h-3 w-3" />Poster</span>
-          </span>
-        )}
-        {onAdd && <span className="ml-auto text-xs text-slate-400">Use + on a day to schedule a shoot, reel, content or image post</span>}
+        <span className="ml-auto text-xs text-slate-400">{onAdd ? 'Use + on a day to schedule something. Click a date to see that day.' : 'Click a date to see that day.'}</span>
       </div>
       <div className="scroll-thin overflow-x-auto">
         <div className="grid min-w-[760px] grid-cols-7">
@@ -249,18 +197,13 @@ function Calendar({ month, from, to, items, onOpen, onAdd, posting, onPostingCha
           {days.map((d, idx) => {
             const nearBottom = idx >= days.length - 14; // Last two weeks open the menu upwards so it isn't cut off.
             const today = isSameDay(d, new Date());
-            const list = shown.filter((i) => isSameDay(new Date(i.scheduledAt), d)).sort((x, y) => x.scheduledAt.localeCompare(y.scheduledAt));
+            const list = onDay(d);
             const key = d.toISOString();
-            const dayKey = format(d, 'yyyy-MM-dd');
-            const clientEvents = showPosting && posting
-              ? posting.events.filter((e) => e.date === dayKey).sort((a, b) => POSTING_ORDER[a.type] - POSTING_ORDER[b.type] || a.client.localeCompare(b.client))
-              : [];
             return (
               <div key={key} className={clsx('group relative min-h-28 border-b border-r border-slate-100 p-1.5', !isSameMonth(d, month) && 'bg-slate-50/70', onAdd && 'hover:bg-indigo-50/30')}>
                 <div className="mb-1 flex items-center justify-between">
-                  <button type="button" onClick={(ev) => { ev.stopPropagation(); if (clientEvents.length) setDayOpen(dayKey); }}
-                    title={clientEvents.length ? 'See everything on this day' : undefined}
-                    className={clsx('flex h-6 w-6 items-center justify-center rounded-full text-xs', today ? 'bg-slate-900 font-semibold text-white' : isSameMonth(d, month) ? 'text-slate-700' : 'text-slate-400', clientEvents.length && !today && 'hover:bg-slate-200')}>{format(d, 'd')}</button>
+                  <button type="button" onClick={(ev) => { ev.stopPropagation(); setDayOpen(d); }} title="See this day"
+                    className={clsx('flex h-6 w-6 items-center justify-center rounded-full text-xs', today ? 'bg-slate-900 font-semibold text-white' : isSameMonth(d, month) ? 'text-slate-700 hover:bg-slate-200' : 'text-slate-400 hover:bg-slate-200')}>{format(d, 'd')}</button>
                   {onAdd && (
                     <button type="button" aria-label={`Add on ${format(d, 'd MMMM')}`} title={`Add on ${format(d, 'd MMM')}`}
                       onClick={(e) => { e.stopPropagation(); setMenuDay(menuDay === key ? null : key); }}
@@ -285,114 +228,68 @@ function Calendar({ month, from, to, items, onOpen, onAdd, posting, onPostingCha
                   </div>
                 )}
                 <div className="space-y-1">
-                  {list.map((i) => (
-                    <button key={i.id} onClick={(e) => { e.stopPropagation(); onOpen(i); }} title={`${KIND[i.kind].label}: ${i.title}${i.assignee ? ` · ${i.assignee.fullName}` : ''}`}
+                  {list.slice(0, MAX_PER_DAY).map((i) => (
+                    <button key={i.id} onClick={(e) => { e.stopPropagation(); onOpen(i); }}
+                      title={[`${KIND[i.kind].label}: ${i.title}`, i.assignee ? `With ${i.assignee.fullName}` : null, i.notes].filter(Boolean).join('\n')}
                       className={clsx('block w-full truncate rounded-md border px-1.5 py-0.5 text-left text-[11px] leading-4', KIND[i.kind].chip, !isOpen(i.status) && 'opacity-60', i.status === 'CANCELLED' && 'line-through')}>
                       <span className="font-semibold">{format(new Date(i.scheduledAt), 'h:mm')}</span> {i.title}
                       {i.assignee && <span className="opacity-70"> · {i.assignee.fullName.split(' ')[0]}</span>}
                     </button>
                   ))}
-                  {(() => {
-                    if (!clientEvents.length) return null;
-                    const groups = byClient(clientEvents);
-                    const shownGroups = groups.slice(0, MAX_CLIENTS);
-                    return <>
-                      {shownGroups.map((g) => <ClientLine key={g.clientId} group={g} today={posting!.today} />)}
-                      {groups.length > MAX_CLIENTS && (
-                        <button onClick={(ev) => { ev.stopPropagation(); setDayOpen(dayKey); }}
-                          className="w-full rounded-md px-1.5 py-0.5 text-left text-[11px] font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-800">
-                          +{groups.length - MAX_CLIENTS} more
-                        </button>
-                      )}
-                    </>;
-                  })()}
+                  {list.length > MAX_PER_DAY && (
+                    <button onClick={(ev) => { ev.stopPropagation(); setDayOpen(d); }}
+                      className="w-full rounded-md px-1.5 py-0.5 text-left text-[11px] font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-800">
+                      +{list.length - MAX_PER_DAY} more
+                    </button>
+                  )}
                 </div>
               </div>
             );
           })}
         </div>
       </div>
-      {dayOpen && posting && (
-        <DayPosting date={dayOpen} today={posting.today} canEdit={!!posting.canEdit}
-          events={posting.events.filter((e) => e.date === dayOpen)} onClose={() => setDayOpen(null)} onChanged={() => onPostingChanged?.()} />
+      {dayOpen && (
+        <DayAgenda date={dayOpen} items={onDay(dayOpen)} onClose={() => setDayOpen(null)}
+          onOpen={(i) => { setDayOpen(null); onOpen(i); }}
+          onAdd={onAdd ? (k) => { const d = dayOpen; setDayOpen(null); onAdd(k, d); } : undefined} />
       )}
     </Card>
   );
 }
 
-const SHORT: Record<PostingEvent['type'], string> = { LEAD_START: 'Lead start', LEAD_END: 'Lead end', SHOOT: 'Shoot', VIDEO: 'Reel / video', POSTER: 'AI poster' };
-
-/** One client on one day: colour bar, name, period and shoot markers, and a status dot per reel and poster. */
-function ClientLine({ group, today }: { group: { clientId: string; client: string; events: PostingEvent[] }; today: string }) {
-  const has = (t: PostingEvent['type']) => group.events.some((e) => e.type === t);
-  const work = group.events.filter((e) => e.type === 'VIDEO' || e.type === 'POSTER');
-  const tip = [group.client, ...group.events.map((e) => `${e.label ?? SHORT[e.type]}${e.type === 'VIDEO' || e.type === 'POSTER' ? ` (${MARK[markOf(e, today)].label.toLowerCase()})` : ''}`)].join('\n');
-  const allDone = work.length > 0 && work.every((e) => e.status === 'DONE') && !has('LEAD_START') && !has('LEAD_END') && !has('SHOOT');
-  return (
-    <Link to={`/media?tab=posting&client=${group.clientId}`} onClick={(ev) => ev.stopPropagation()} title={tip}
-      className={clsx('flex w-full items-center gap-1.5 rounded-md bg-white py-0.5 pl-0.5 pr-1.5 text-[11px] leading-4 text-slate-700 shadow-[0_0_0_1px_rgb(226_232_240)] hover:shadow-[0_0_0_1px_rgb(148_163_184)]', allDone && 'opacity-60')}>
-      <span className={clsx('h-4 w-1 shrink-0 rounded-full', clientColor(group.clientId))} />
-      <span className="min-w-0 flex-1 truncate font-medium">{group.client}</span>
-      {has('LEAD_START') && <span className="shrink-0 rounded bg-teal-600 px-1 text-[9px] font-bold uppercase text-white" title="Lead period starts">Start</span>}
-      {has('LEAD_END') && <span className="shrink-0 rounded bg-slate-700 px-1 text-[9px] font-bold uppercase text-white" title="Lead period ends">End</span>}
-      {has('SHOOT') && <Camera className="h-3 w-3 shrink-0 text-teal-700" aria-label="Shoot" />}
-      {work.map((e, i) => {
-        const Icon = e.type === 'VIDEO' ? Clapperboard : Image;
-        return (
-          <span key={i} className="relative shrink-0 text-slate-400">
-            <Icon className="h-3 w-3" />
-            <span className={clsx('absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-white', MARK[markOf(e, today)].dot)} />
-          </span>
-        );
-      })}
-    </Link>
-  );
-}
-
-/** Everything from the posting calendars on one day, grouped by client, with Mark done. */
-function DayPosting({ date, today, events, canEdit, onClose, onChanged }: {
-  date: string; today: string; events: PostingEvent[]; canEdit: boolean; onClose: () => void; onChanged: () => void;
+/** Everything scheduled on one day, in time order, with what each one is about. */
+function DayAgenda({ date, items, onClose, onOpen, onAdd }: {
+  date: Date; items: Item[]; onClose: () => void; onOpen: (i: Item) => void; onAdd?: (kind: Kind) => void;
 }) {
-  const [busy, setBusy] = useState<string | null>(null);
-  const done = async (e: PostingEvent) => {
-    if (!e.slotId) return;
-    setBusy(`${e.slotId}-${e.type}`);
-    try {
-      await api.patch(`/posting/rows/${e.slotId}`, e.type === 'VIDEO' ? { videoStatus: 'DONE' } : { posterStatus: 'DONE' });
-      toast.success('Marked done'); onChanged();
-    } catch (err) { toast.error(errMsg(err)); } finally { setBusy(null); }
-  };
   return (
-    <Modal open wide onClose={onClose} title={format(new Date(`${date}T12:00:00`), 'EEEE d MMMM yyyy')}>
-      {!events.length ? <p className="text-sm text-slate-500">Nothing planned.</p> : (
-        <div className="space-y-3">
-          {byClient(events).map((g) => (
-            <div key={g.clientId} className="rounded-xl border border-slate-200">
-              <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
-                <span className={clsx('h-3 w-3 rounded-full', clientColor(g.clientId))} />
-                <Link to={`/media?tab=posting&client=${g.clientId}`} onClick={onClose} className="font-semibold text-slate-900 hover:underline">{g.client}</Link>
-              </div>
-              <ul className="divide-y divide-slate-50">
-                {g.events.sort((a, b) => POSTING_ORDER[a.type] - POSTING_ORDER[b.type]).map((e, i) => {
-                  const work = e.type === 'VIDEO' || e.type === 'POSTER';
-                  const m = markOf(e, today);
-                  const Icon = e.type === 'LEAD_START' ? Flag : e.type === 'LEAD_END' ? FlagOff : e.type === 'SHOOT' ? Camera : e.type === 'VIDEO' ? Clapperboard : Image;
-                  return (
-                    <li key={i} className="flex items-center gap-2.5 px-3 py-2 text-sm">
-                      <Icon className="h-4 w-4 shrink-0 text-slate-400" />
-                      <span className="text-slate-500">{SHORT[e.type]}</span>
-                      {work && e.label && <span className="font-medium text-slate-800">{e.label}</span>}
-                      {work && <span className={clsx('ml-auto rounded-full px-2 py-0.5 text-xs font-medium', MARK[m].pill)}>{MARK[m].label}</span>}
-                      {work && canEdit && e.status !== 'DONE' && (
-                        <Button size="sm" variant="secondary" loading={busy === `${e.slotId}-${e.type}`} onClick={() => done(e)}>Mark done</Button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          ))}
-        </div>
+    <Modal open wide onClose={onClose} title={format(date, 'EEEE d MMMM yyyy')}
+      footer={onAdd ? <div className="flex flex-wrap gap-2">
+        {KINDS.map((k) => { const I = KIND[k].icon; return <Button key={k} size="sm" variant="secondary" onClick={() => onAdd(k)}><I className="h-3.5 w-3.5" />Add {KIND[k].label.toLowerCase()}</Button>; })}
+      </div> : undefined}>
+      {!items.length ? <p className="text-sm text-slate-500">Nothing scheduled on this day.</p> : (
+        <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200">
+          {items.map((i) => {
+            const I = KIND[i.kind].icon;
+            return (
+              <li key={i.id}>
+                <button type="button" onClick={() => onOpen(i)} className="flex w-full gap-3 px-3 py-2.5 text-left hover:bg-slate-50">
+                  <div className="w-16 shrink-0 pt-0.5 text-sm font-semibold tabular-nums text-slate-700">{format(new Date(i.scheduledAt), 'h:mm a')}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={clsx('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium', KIND[i.kind].chip)}><I className="h-3 w-3" />{KIND[i.kind].label}</span>
+                      <span className={clsx('font-medium text-slate-900', i.status === 'CANCELLED' && 'line-through')}>{i.title}</span>
+                      <Badge className={MEDIA_STATUS[i.status].color}>{statusLabel(i.kind, i.status)}</Badge>
+                    </div>
+                    {i.notes && <p className="mt-1 whitespace-pre-line text-sm text-slate-600">{i.notes}</p>}
+                    <p className="mt-1 text-xs text-slate-500">
+                      {[i.assignee?.fullName ?? 'Not assigned', i.client?.name, i.kind === 'SHOOT' ? i.location : i.platform].filter(Boolean).join(' · ')}
+                    </p>
+                  </div>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </Modal>
   );
@@ -557,9 +454,9 @@ function ItemModal({ item, onClose, onSaved, onAddExpense }: {
           <Input value={f.link} onChange={(e) => set({ link: e.target.value })} disabled={!isNew && !item.permissions?.canUpdate} placeholder="https://…" />
         </Field>
       </div>
-      <Field label="Notes"><Textarea rows={3} value={f.notes} onChange={(e) => set({ notes: e.target.value })} disabled={!isNew && !item.permissions?.canUpdate}
-        placeholder={shoot ? 'Shot list, props, timings…' : 'Caption, hashtags, brief…'} /></Field>
-      {!full && <p className="text-xs text-slate-500">You can update the status, link and notes. Ask a media manager to change the rest.</p>}
+      <Field label="What happens"><Textarea rows={4} value={f.notes} onChange={(e) => set({ notes: e.target.value })} disabled={!isNew && !item.permissions?.canUpdate}
+        placeholder={shoot ? 'What is being shot, shot list, props, timings…' : f.kind === 'CONTENT' ? 'What the piece covers, brief, word count…' : 'What the post is about, caption, hashtags…'} /></Field>
+      {!full && <p className="text-xs text-slate-500">You can update the status, link and what happens. Ask a media manager to change the rest.</p>}
 
       {!isNew && shoot && shootCosts.data && (
         <div className="rounded-xl border border-slate-200 p-3">

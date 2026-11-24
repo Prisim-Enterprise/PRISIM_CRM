@@ -6,8 +6,8 @@ describe('jobsDue', () => {
   it('every minute: follow-up reminders, lead alerts and lead sync', () => {
     expect(jobsDue(at('2026-11-17T10:03:00Z'))).toEqual(['followUps', 'leadAlerts', 'leadSync']);
   });
-  it('every ten minutes: also overdue tasks, chat purge and the posting calendar', () => {
-    expect(jobsDue(at('2026-11-17T10:20:00Z'))).toEqual(['followUps', 'leadAlerts', 'leadSync', 'overdueTasks', 'purgeMessages', 'postingCalendar']);
+  it('every ten minutes: also overdue tasks and chat purge', () => {
+    expect(jobsDue(at('2026-11-17T10:20:00Z'))).toEqual(['followUps', 'leadAlerts', 'leadSync', 'overdueTasks', 'purgeMessages']);
   });
   it('02:30 IST (21:00 UTC): the nightly reconciliation too', () => {
     expect(jobsDue(at('2026-11-17T21:00:00Z'))).toContain('reconcile');

@@ -21,7 +21,6 @@ import { ClientsModule } from './clients/clients';
 import { MediaModule } from './media/media';
 import { SeoModule } from './seo/seo';
 import { MessagesModule } from './messages/messages';
-import { PostingModule } from './clients/posting';
 import { QuotationsModule } from './quotations/quotations';
 import { AccountingModule } from './accounting/accounting';
 import { PayrollModule } from './payroll/payroll';
@@ -68,7 +67,6 @@ class HealthController {
     MediaModule,
     SeoModule,
     MessagesModule,
-    PostingModule,
     QuotationsModule,
     AccountingModule,
     PayrollModule,
