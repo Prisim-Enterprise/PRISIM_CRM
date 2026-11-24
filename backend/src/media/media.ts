@@ -5,7 +5,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
-  IsBoolean, IsDateString, IsEnum, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateIf,
+  IsBoolean, IsDateString, IsEnum, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateIf,
 } from 'class-validator';
 import { MediaExpenseCategory, MediaKind, MediaStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -23,6 +23,8 @@ class ItemQuery {
   @IsOptional() @IsDateString() from?: string;
   @IsOptional() @IsDateString() to?: string;
   @IsOptional() @IsString() assignee?: string; // "me" | user id
+  /** A client id, or "none" for Prisim's own work (no client). */
+  @IsOptional() @Matches(/^(none|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i, { message: 'client must be a client id or "none"' }) client?: string;
 }
 
 class CreateItemDto {
@@ -129,6 +131,7 @@ export class MediaService {
     if (q.from) and.push({ scheduledAt: { gte: new Date(q.from) } });
     if (q.to) and.push({ scheduledAt: { lt: new Date(q.to) } });
     if (q.assignee) and.push({ assigneeId: q.assignee === 'me' ? u.id : q.assignee });
+    if (q.client) and.push({ clientId: q.client === 'none' ? null : q.client });
     const items = await this.prisma.mediaItem.findMany({ where: { AND: and }, include: itemInclude, orderBy: { scheduledAt: 'asc' }, take: 1000 });
     return items.map((i) => this.decorate(u, i));
   }

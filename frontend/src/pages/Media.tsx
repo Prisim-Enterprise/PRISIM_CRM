@@ -69,6 +69,7 @@ export default function Media() {
   const tab = (params.get('tab') as Tab) || 'calendar';
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
   const [assignee, setAssignee] = useState('');
+  const [client, setClient] = useState(''); // '' everyone, 'none' Prisim's own, or a client id
   const [editing, setEditing] = useState<Partial<Item> | null>(null);
   const [expense, setExpense] = useState<Partial<Expense> | null>(null);
   const manage = can('media.manage');
@@ -80,9 +81,17 @@ export default function Media() {
   const from = startOfWeek(startOfMonth(month), { weekStartsOn: 1 });
   const to = addDays(startOfWeek(endOfMonth(month), { weekStartsOn: 1 }), 7); // Midnight after the last Sunday shown
   const items = useQuery({
-    queryKey: ['media', from.toISOString(), assignee],
-    queryFn: () => api.get<Item[]>('/media', { from: from.toISOString(), to: to.toISOString(), assignee: assignee || undefined }),
+    queryKey: ['media', from.toISOString(), assignee, client],
+    queryFn: () => api.get<Item[]>('/media', { from: from.toISOString(), to: to.toISOString(), assignee: assignee || undefined, client: client || undefined }),
   });
+  // Clients to filter by: the client list, plus any client already on this month's schedule.
+  const clientList = useQuery({ queryKey: ['clients', '', ''], queryFn: () => api.get<{ id: string; name: string }[]>('/clients', {}), staleTime: 60_000 });
+  const clientOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of clientList.data ?? []) m.set(c.id, c.name);
+    for (const i of items.data ?? []) if (i.client) m.set(i.client.id, i.client.name);
+    return [...m].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [clientList.data, items.data]);
   const summary = useQuery({ queryKey: ['media-summary'], queryFn: () => api.get<Summary>('/media/summary') });
 
   // A notification links to /media?item=<id>.
@@ -140,6 +149,14 @@ export default function Media() {
               <option value="">Everyone</option>
               <option value="me">Assigned to me</option>
               {dir.data?.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+            </Select>
+          )}
+          {tab !== 'expenses' && (
+            <Select value={client} onChange={(e) => setClient(e.target.value)} className="w-44" aria-label="Client">
+              <option value="">All clients</option>
+              <option value="none">Prisim's own</option>
+              {clientOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {client && client !== 'none' && !clientOptions.some((c) => c.id === client) && <option value={client}>Selected client</option>}
             </Select>
           )}
         </div>
