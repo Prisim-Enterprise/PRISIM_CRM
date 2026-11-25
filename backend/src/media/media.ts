@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { AuthUser, CurrentUser, RequireAny } from '../common/current-user';
 import { NotificationsService } from '../notifications/notifications';
+import { TasksModule, TasksService } from '../tasks/tasks';
 
 const trimOrNull = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() || null : value);
 const opt = (max: number) => [IsOptional(), Transform(trimOrNull), ValidateIf((_: unknown, v: unknown) => v !== null), IsString(), MaxLength(max)];
@@ -33,6 +34,9 @@ class CreateItemDto {
   @IsDateString() scheduledAt: string;
   @IsOptional() @IsEnum(MediaStatus) status?: MediaStatus;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() assigneeId?: string | null;
+  /** Who edits it and who posts it. Each gets a To-do task. */
+  @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() editorId?: string | null;
+  @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() posterId?: string | null;
   /** Every schedule entry is for at least one client. */
   @IsArray() @ArrayMinSize(1, { message: 'Choose at least one client' }) @ArrayMaxSize(50) @ArrayUnique()
   @IsUUID('all', { each: true, message: 'Choose the clients this is for' }) clientIds: string[];
@@ -55,6 +59,8 @@ class UpdateItemDto {
   @IsOptional() @IsDateString() scheduledAt?: string;
   @IsOptional() @IsEnum(MediaStatus) status?: MediaStatus;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() assigneeId?: string | null;
+  @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() editorId?: string | null;
+  @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() posterId?: string | null;
   /** Can be changed to other clients, but never to none. */
   @ValidateIf((_, v) => v !== undefined) @IsArray() @ArrayMinSize(1, { message: 'Choose at least one client' }) @ArrayMaxSize(50) @ArrayUnique()
   @IsUUID('all', { each: true, message: 'Choose the clients this is for' }) clientIds?: string[];
@@ -122,9 +128,14 @@ class UpdateScriptDto {
 
 const person = { select: { id: true, fullName: true } } as const;
 const scriptInclude = { client: { select: { id: true, name: true } }, writer: person } satisfies Prisma.MediaScriptInclude;
+const linkedTask = { select: { id: true, number: true, status: true, assigneeId: true } } as const;
 const itemInclude = {
   assignee: person,
   createdBy: person,
+  editor: person,
+  poster: person,
+  editTask: linkedTask,
+  postTask: linkedTask,
   clients: { select: { client: { select: { id: true, name: true } } }, orderBy: { client: { name: 'asc' } } },
   _count: { select: { expenses: true } },
 } satisfies Prisma.MediaItemInclude;
@@ -137,19 +148,21 @@ const ASSIGNEE_FIELDS = ['status', 'link', 'notes'] as const;
 
 @Injectable()
 export class MediaService {
-  constructor(private prisma: PrismaService, private audit: AuditService, private notifications: NotificationsService) {}
+  constructor(private prisma: PrismaService, private audit: AuditService, private notifications: NotificationsService, private tasks: TasksService) {}
 
   private manages(u: AuthUser) { return u.permissions.has('media.manage'); }
   private seesAll(u: AuthUser) { return this.manages(u) || u.permissions.has('media.view.all'); }
 
   /** Without view-all, people see what is assigned to them or what they added. */
   private visible(u: AuthUser): Prisma.MediaItemWhereInput {
-    return this.seesAll(u) ? {} : { OR: [{ assigneeId: u.id }, { createdById: u.id }] };
+    return this.seesAll(u) ? {} : { OR: [{ assigneeId: u.id }, { editorId: u.id }, { posterId: u.id }, { createdById: u.id }] };
   }
 
-  private async checkLinks(dto: { assigneeId?: string | null; clientId?: string | null; clientIds?: string[] }) {
-    if (dto.assigneeId && !(await this.prisma.user.count({ where: { id: dto.assigneeId, isActive: true, deletedAt: null } }))) {
-      throw new BadRequestException('That person is inactive or does not exist');
+  private async checkLinks(dto: { assigneeId?: string | null; editorId?: string | null; posterId?: string | null; clientId?: string | null; clientIds?: string[] }) {
+    for (const id of [dto.assigneeId, dto.editorId, dto.posterId]) {
+      if (id && !(await this.prisma.user.count({ where: { id, isActive: true, deletedAt: null } }))) {
+        throw new BadRequestException('That person is inactive or does not exist');
+      }
     }
     if (dto.clientId && !(await this.prisma.client.count({ where: { id: dto.clientId } }))) {
       throw new BadRequestException('That client does not exist');
@@ -160,7 +173,7 @@ export class MediaService {
   }
 
   private decorate(u: AuthUser, { clients, ...i }: Prisma.MediaItemGetPayload<{ include: typeof itemInclude }>) {
-    const mine = i.assigneeId === u.id;
+    const mine = [i.assigneeId, i.editorId, i.posterId].includes(u.id);
     return { ...i, clients: clients.map((c) => c.client), permissions: { canManage: this.manages(u), canUpdate: this.manages(u) || mine } };
   }
 
@@ -196,12 +209,13 @@ export class MediaService {
     const i = await this.prisma.mediaItem.create({
       data: {
         kind: dto.kind, title: dto.title.trim(), scheduledAt: new Date(dto.scheduledAt), status: dto.status ?? 'PLANNED',
-        assigneeId: dto.assigneeId ?? null, platform: dto.platform, location: dto.location,
+        assigneeId: dto.assigneeId ?? null, editorId: dto.editorId ?? null, posterId: dto.posterId ?? null,
+        platform: dto.platform, location: dto.location,
         models: dto.models, link: dto.link, notes: dto.notes, createdById: u.id,
         clients: { create: dto.clientIds.map((clientId) => ({ clientId })) },
       },
       include: itemInclude,
-    });
+    }).then((i) => this.syncTasks(u, i));
     await this.audit.record({ actorId: u.id, action: 'media.created', entityType: 'media', entityId: i.id, after: { kind: i.kind, title: i.title, scheduledAt: i.scheduledAt, clientIds: dto.clientIds } });
     if (i.assigneeId && i.assigneeId !== u.id) await this.tellAssignee(i);
     return this.decorate(u, i);
@@ -214,12 +228,14 @@ export class MediaService {
     const items = await this.prisma.$transaction(when.map((scheduledAt) => this.prisma.mediaItem.create({
       data: {
         kind: dto.kind, title: dto.title.trim(), scheduledAt, status: dto.status ?? 'PLANNED',
-        assigneeId: dto.assigneeId ?? null, platform: dto.platform, location: dto.location,
+        assigneeId: dto.assigneeId ?? null, editorId: dto.editorId ?? null, posterId: dto.posterId ?? null,
+        platform: dto.platform, location: dto.location,
         models: dto.models, link: dto.link, notes: dto.notes, createdById: u.id,
         clients: { create: dto.clientIds.map((clientId) => ({ clientId })) },
       },
       include: itemInclude,
     })));
+    for (let n = 0; n < items.length; n++) items[n] = await this.syncTasks(u, items[n]);
     await this.audit.record({
       actorId: u.id, action: 'media.created', entityType: 'media', entityId: items[0].id,
       after: { kind: dto.kind, title: dto.title.trim(), days: items.length, ids: items.map((i) => i.id), scheduledAts: when, clientIds: dto.clientIds },
@@ -238,6 +254,40 @@ export class MediaService {
     return { created: items.length, items: items.map((i) => this.decorate(u, i)) };
   }
 
+  /**
+   * Keeps the editing and posting tasks in step with the entry. Choosing someone gives them a To-do task;
+   * choosing someone else hands that task over, unless it is already done (then they get a fresh one).
+   * Clearing the person leaves the task as it is. Open tasks follow the entry's title and date.
+   */
+  private async syncTasks(u: AuthUser, i: Prisma.MediaItemGetPayload<{ include: typeof itemInclude }>) {
+    const jobs = [
+      { who: i.editorId, task: i.editTask, link: 'editTaskId', verb: 'Edit' },
+      { who: i.posterId, task: i.postTask, link: 'postTaskId', verb: 'Post' },
+    ] as const;
+    let changed = false;
+    for (const j of jobs) {
+      const title = `${j.verb}: ${i.title}`;
+      const open = j.task && j.task.status !== 'DONE';
+      if (open) {
+        await this.prisma.task.updateMany({ where: { id: j.task!.id, OR: [{ title: { not: title } }, { dueAt: { not: i.scheduledAt } }] }, data: { title: title.slice(0, 200), dueAt: i.scheduledAt } });
+      }
+      if (j.who && (!j.task || (!open && j.task.assigneeId !== j.who))) {
+        const when = i.scheduledAt.toLocaleString('en-IN', { timeZone: process.env.APP_TIMEZONE || 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+        const clients = i.clients.map((c) => c.client.name).join(', ');
+        const t = await this.tasks.createLinked(u, j.who, {
+          title, dueAt: i.scheduledAt, clientIds: i.clients.map((c) => c.client.id),
+          description: `${j.verb === 'Edit' ? 'Edit' : 'Post'} the ${KIND_LABEL[i.kind].toLowerCase()} "${i.title}"${clients ? ` for ${clients}` : ''}, scheduled for ${when}${i.platform ? ` on ${i.platform}` : ''}.\n\nMedia schedule: /media?item=${i.id}`,
+        });
+        await this.prisma.mediaItem.update({ where: { id: i.id }, data: { [j.link]: t.id } });
+        changed = true;
+      } else if (j.who && open && j.task!.assigneeId !== j.who) {
+        await this.tasks.reassignLinked(u, j.task!.id, j.who);
+        changed = true;
+      }
+    }
+    return changed ? this.prisma.mediaItem.findUniqueOrThrow({ where: { id: i.id }, include: itemInclude }) : i;
+  }
+
   private tellAssignee(i: { id: string; kind: MediaKind; title: string; scheduledAt: Date; assigneeId: string | null }) {
     const when = i.scheduledAt.toLocaleString('en-IN', { timeZone: process.env.APP_TIMEZONE || 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
     return this.notifications.notify(i.assigneeId, {
@@ -249,7 +299,7 @@ export class MediaService {
     const before = await this.prisma.mediaItem.findFirst({ where: { AND: [{ id }, this.visible(u)] }, include: { clients: { select: { clientId: true } } } });
     if (!before) throw new NotFoundException('Schedule entry not found');
     if (!this.manages(u)) {
-      if (before.assigneeId !== u.id) throw new ForbiddenException('Only the person assigned, or a media manager, can update this');
+      if (![before.assigneeId, before.editorId, before.posterId].includes(u.id)) throw new ForbiddenException('Only the people on this entry, or a media manager, can update this');
       const extra = Object.keys(dto).filter((k) => (dto as Record<string, unknown>)[k] !== undefined && !(ASSIGNEE_FIELDS as readonly string[]).includes(k));
       if (extra.length) throw new ForbiddenException('You can update the status, link and notes. Ask a media manager to change the rest.');
     }
@@ -258,12 +308,13 @@ export class MediaService {
       where: { id },
       data: {
         kind: dto.kind, title: dto.title?.trim(), scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : undefined, status: dto.status,
-        assigneeId: dto.assigneeId, platform: dto.platform, location: dto.location, models: dto.models, link: dto.link, notes: dto.notes,
+        assigneeId: dto.assigneeId, editorId: dto.editorId, posterId: dto.posterId,
+        platform: dto.platform, location: dto.location, models: dto.models, link: dto.link, notes: dto.notes,
         clients: dto.clientIds ? { deleteMany: {}, create: dto.clientIds.map((clientId) => ({ clientId })) } : undefined,
       },
       include: itemInclude,
-    });
-    const keys = ['kind', 'title', 'scheduledAt', 'status', 'assigneeId', 'platform', 'location', 'models', 'link', 'notes'] as const;
+    }).then((i) => this.syncTasks(u, i));
+    const keys = ['kind', 'title', 'scheduledAt', 'status', 'assigneeId', 'editorId', 'posterId', 'platform', 'location', 'models', 'link', 'notes'] as const;
     const changed: Record<string, unknown> = Object.fromEntries(keys.filter((k) => String(before[k]) !== String(i[k])).map((k) => [k, { from: before[k], to: i[k] }]));
     const oldClients = before.clients.map((c) => c.clientId).sort();
     const newClients = i.clients.map((c) => c.client.id).sort();
@@ -442,5 +493,5 @@ export class MediaController {
   @Delete('media-expenses/:id') removeExpense(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.svc.removeExpense(u, id); }
 }
 
-@Module({ providers: [MediaService], controllers: [MediaController] })
+@Module({ imports: [TasksModule], providers: [MediaService], controllers: [MediaController] })
 export class MediaModule {}

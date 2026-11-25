@@ -70,6 +70,8 @@ model User {
   clientWorkUpdates     ClientWorkUpdate[]
   mediaAssigned         MediaItem[]          @relation("MediaAssignee")
   mediaCreated          MediaItem[]          @relation("MediaCreator")
+  mediaEdited           MediaItem[]          @relation("MediaEditor")
+  mediaPosted           MediaItem[]          @relation("MediaPoster")
   mediaExpenses         MediaExpense[]
   mediaScripts          MediaScript[]
   seoAccountsCreated    SeoAccount[]
@@ -452,13 +454,16 @@ model Task {
   updatedAt       DateTime     @updatedAt
 
   /// Everyone working on the task. assigneeId mirrors the first of them, for reports and older screens.
-  assignees   TaskAssignee[]
+  assignees    TaskAssignee[]
   /// Clients this task was work for.
-  clients     TaskClient[]
-  comments    TaskComment[]
-  checklist   TaskChecklistItem[]
-  attachments Attachment[]
-  activities  TaskActivity[]
+  clients      TaskClient[]
+  comments     TaskComment[]
+  checklist    TaskChecklistItem[]
+  attachments  Attachment[]
+  activities   TaskActivity[]
+  /// The media entry this task was made for, as its editing or posting job.
+  mediaEditFor MediaItem?          @relation("MediaEditTask")
+  mediaPostFor MediaItem?          @relation("MediaPostTask")
 
   @@index([assigneeId, status])
   @@index([teamId, status])
@@ -845,6 +850,15 @@ model MediaItem {
   assigneeId  String?           @db.Uuid
   assignee    User?             @relation("MediaAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   clients     MediaItemClient[]
+  /// Who edits it and who posts it. Choosing someone gives them a To-do task, linked here.
+  editorId    String?           @db.Uuid
+  editor      User?             @relation("MediaEditor", fields: [editorId], references: [id], onDelete: SetNull)
+  posterId    String?           @db.Uuid
+  poster      User?             @relation("MediaPoster", fields: [posterId], references: [id], onDelete: SetNull)
+  editTaskId  String?           @unique @db.Uuid
+  editTask    Task?             @relation("MediaEditTask", fields: [editTaskId], references: [id], onDelete: SetNull)
+  postTaskId  String?           @unique @db.Uuid
+  postTask    Task?             @relation("MediaPostTask", fields: [postTaskId], references: [id], onDelete: SetNull)
   platform    String?
   location    String?
   models      String?

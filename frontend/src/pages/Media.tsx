@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
@@ -20,9 +20,13 @@ type Kind = 'SHOOT' | 'REEL' | 'CONTENT' | 'IMAGE';
 type Status = 'PLANNED' | 'IN_PROGRESS' | 'READY' | 'AWAITING_APPROVAL' | 'APPROVED' | 'DONE' | 'CANCELLED';
 type Category = 'MODEL' | 'LOCATION' | 'EQUIPMENT' | 'TRAVEL' | 'FOOD' | 'PROPS' | 'OTHER';
 interface Person { id: string; fullName: string }
+/** The To-do task made for the editor or the poster. */
+interface LinkedTask { id: string; number: number; status: string }
 interface Item {
   id: string; kind: Kind; title: string; scheduledAt: string; status: Status;
   assignee: Person | null; createdBy: Person; clients: { id: string; name: string }[];
+  editor: Person | null; poster: Person | null;
+  editTask: LinkedTask | null; postTask: LinkedTask | null;
   platform: string | null; location: string | null; models: string | null; link: string | null; notes: string | null;
   _count: { expenses: number };
   permissions: { canManage: boolean; canUpdate: boolean };
@@ -316,7 +320,8 @@ function Calendar({ month, from, to, items, scripts, onOpen, onOpenScript, onAdd
                 <div className="space-y-1">
                   {list.slice(0, MAX_PER_DAY).map((e) => e.type === 'item' ? (
                     <button key={e.item.id} onClick={(ev) => { ev.stopPropagation(); onOpen(e.item); }}
-                      title={[`${KIND[e.item.kind].label}: ${e.item.title}`, MEDIA_STATUS[e.item.status].label, e.item.assignee ? `With ${e.item.assignee.fullName}` : null, e.item.notes].filter(Boolean).join('\n')}
+                      title={[`${KIND[e.item.kind].label}: ${e.item.title}`, MEDIA_STATUS[e.item.status].label, e.item.assignee ? `With ${e.item.assignee.fullName}` : null,
+                        e.item.editor ? `Edited by ${e.item.editor.fullName}` : null, e.item.poster ? `Posted by ${e.item.poster.fullName}` : null, e.item.notes].filter(Boolean).join('\n')}
                       className={clsx('block w-full truncate rounded-md border px-1.5 py-0.5 text-left text-[11px] leading-4', KIND[e.item.kind].chip, !isOpen(e.item.status) && 'opacity-60', e.item.status === 'CANCELLED' && 'line-through')}>
                       {e.item.status === 'AWAITING_APPROVAL' && <Hourglass className="mr-0.5 inline h-3 w-3 text-amber-600" aria-label="Waiting for client approval" />}
                       {e.item.status === 'APPROVED' && <CheckCircle2 className="mr-0.5 inline h-3 w-3 text-teal-600" aria-label="Approved" />}
@@ -437,7 +442,7 @@ function ItemModal({ item, onClose, onSaved, onAddExpense, readOnly = false, cos
   });
   const [f, setF] = useState({
     kind: item.kind ?? 'SHOOT', title: item.title ?? '', when: item.scheduledAt ? toLocalInput(new Date(item.scheduledAt)) : '',
-    status: item.status ?? 'PLANNED', assigneeId: item.assignee?.id ?? '', clientIds: (item.clients ?? []).map((c) => c.id), platform: item.platform ?? '',
+    status: item.status ?? 'PLANNED', assigneeId: item.assignee?.id ?? '', editorId: item.editor?.id ?? '', posterId: item.poster?.id ?? '', clientIds: (item.clients ?? []).map((c) => c.id), platform: item.platform ?? '',
     location: item.location ?? '', models: item.models ?? '', link: item.link ?? '', notes: item.notes ?? '',
   });
   const [busy, setBusy] = useState(false);
@@ -466,7 +471,7 @@ function ItemModal({ item, onClose, onSaved, onAddExpense, readOnly = false, cos
     try {
       const body = full ? {
         kind: f.kind, title: f.title.trim(), scheduledAt: many ? undefined : new Date(f.when).toISOString(), status: f.status,
-        assigneeId: f.assigneeId || null, clientIds: f.clientIds, platform: shoot ? null : f.platform || null,
+        assigneeId: f.assigneeId || null, editorId: f.editorId || null, posterId: f.posterId || null, clientIds: f.clientIds, platform: shoot ? null : f.platform || null,
         location: shoot ? f.location || null : null, models: shoot ? f.models || null : null, link: f.link || null, notes: f.notes || null,
       } : { status: f.status, link: f.link || null, notes: f.notes || null };
       if (many) {
@@ -548,13 +553,17 @@ function ItemModal({ item, onClose, onSaved, onAddExpense, readOnly = false, cos
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         {!(isNew && full) && <Field label={shoot ? 'Shoot date and time' : f.kind === 'CONTENT' ? 'Due' : 'Post on'}><Input type="datetime-local" value={f.when} onChange={(e) => set({ when: e.target.value })} disabled={!full} /></Field>}
-        <Field label={shoot ? 'Who is in charge' : f.kind === 'CONTENT' ? 'Writer' : 'Who posts it'}>
+        <Field label={shoot ? 'Who is in charge' : f.kind === 'CONTENT' ? 'Writer' : 'Assigned to'}>
           <Select value={f.assigneeId} onChange={(e) => set({ assigneeId: e.target.value })} disabled={!full}>
             <option value="">Not assigned</option>
             {dir.data?.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
             {item.assignee && !dir.data?.some((u) => u.id === item.assignee!.id) && <option value={item.assignee.id}>{item.assignee.fullName}</option>}
           </Select>
         </Field>
+        <PersonTaskField label="Who edited it" value={f.editorId} onChange={(v) => set({ editorId: v })} disabled={!full}
+          people={dir.data} current={item.editor} task={item.editTask} />
+        <PersonTaskField label="Who posted it" value={f.posterId} onChange={(v) => set({ posterId: v })} disabled={!full}
+          people={dir.data} current={item.poster} task={item.postTask} />
         {shoot ? <>
           <Field label="Location"><Input value={f.location} onChange={(e) => set({ location: e.target.value })} disabled={!full} placeholder="Studio, address or venue" /></Field>
           <Field label="Models"><Input value={f.models} onChange={(e) => set({ models: e.target.value })} disabled={!full} placeholder="Names, separated by commas" /></Field>
@@ -839,5 +848,28 @@ function DayPicker({ value, onChange }: { value: string[]; onChange: (v: string[
       </div>
       {value.length > 0 && <button type="button" onClick={() => onChange([])} className="mt-1 text-xs text-slate-500 hover:text-slate-700">Clear</button>}
     </div>
+  );
+}
+
+const TASK_STATUS: Record<string, string> = { TODO: 'To do', IN_PROGRESS: 'In progress', REVIEW: 'In review', BLOCKED: 'Blocked', DONE: 'Done' };
+
+/** A person picker that also gives them a To-do task, with a link to it once it exists. */
+function PersonTaskField({ label, value, onChange, disabled, people, current, task }: {
+  label: string; value: string; onChange: (v: string) => void; disabled: boolean;
+  people?: Person[]; current?: Person | null; task?: LinkedTask | null;
+}) {
+  const changed = value && value !== (current?.id ?? '');
+  const hint = task && !changed
+    ? <Link to={`/tasks?open=${task.id}`} className="text-indigo-600 hover:underline">Task PRS-{task.number} · {TASK_STATUS[task.status] ?? task.status}</Link>
+    : changed ? (task && task.status !== 'DONE' ? 'Their task will move to this person' : 'They get a To-do task when you save')
+    : !disabled ? 'Gets a To-do task in Tasks' : undefined;
+  return (
+    <Field label={label} hint={hint}>
+      <Select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled}>
+        <option value="">No one yet</option>
+        {people?.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+        {current && !people?.some((u) => u.id === current.id) && <option value={current.id}>{current.fullName}</option>}
+      </Select>
+    </Field>
   );
 }

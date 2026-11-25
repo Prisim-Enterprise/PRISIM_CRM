@@ -258,6 +258,48 @@ export class TasksService {
     return task;
   }
 
+  /**
+   * A To-do task for one person, made by another feature (Media's editor and poster).
+   * That feature has already checked the actor may assign the work, so no task permissions are needed.
+   */
+  async createLinked(actor: AuthUser, userId: string, data: { title: string; description?: string; dueAt?: Date | null; clientIds?: string[] }) {
+    const max = await this.prisma.task.aggregate({ _max: { position: true }, where: { status: 'TODO' } });
+    const task = await this.prisma.$transaction(async (tx) => {
+      const t = await tx.task.create({
+        data: {
+          title: data.title.slice(0, 200), description: data.description, createdById: actor.id, assigneeId: userId,
+          assignees: { create: [{ userId }] },
+          clients: { create: [...new Set(data.clientIds ?? [])].map((clientId, i) => ({ clientId, createdAt: new Date(Date.now() + i) })) },
+          dueAt: data.dueAt ?? null, position: (max._max.position ?? 0) + 1000,
+        },
+      });
+      await this.activity(tx, t.id, actor.id, 'created');
+      return t;
+    });
+    if (userId !== actor.id) {
+      await this.notifications.notify(userId, {
+        type: 'task.assigned', title: `New task: PRS-${task.number} ${task.title}`, body: `From ${actor.fullName}`, link: `/tasks?open=${task.id}`,
+      });
+    }
+    return task;
+  }
+
+  /** Hands a linked task to someone else, keeping its history. */
+  async reassignLinked(actor: AuthUser, taskId: string, userId: string) {
+    const task = await this.prisma.$transaction(async (tx) => {
+      await tx.taskAssignee.deleteMany({ where: { taskId } });
+      const t = await tx.task.update({ where: { id: taskId }, data: { assigneeId: userId, assignees: { create: [{ userId }] } } });
+      await this.activity(tx, taskId, actor.id, 'assigned', { to: [userId] });
+      return t;
+    });
+    if (userId !== actor.id) {
+      await this.notifications.notify(userId, {
+        type: 'task.assigned', title: `Task assigned to you: PRS-${task.number} ${task.title}`, body: `By ${actor.fullName}`, link: `/tasks?open=${task.id}`,
+      });
+    }
+    return task;
+  }
+
   async update(user: AuthUser, id: string, dto: UpdateTaskDto) {
     const { task, people: before, canManage, canWork } = await this.load(user, id);
     const managerFields: (keyof UpdateTaskDto)[] = ['assigneeId', 'assigneeIds', 'clientIds', 'teamId', 'priority', 'dueAt', 'startAt', 'requiresReview', 'title'];
