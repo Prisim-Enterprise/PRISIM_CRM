@@ -94,6 +94,13 @@ export const DEFAULT_ROLES: { key: string; name: string; description: string; pe
     permissions: ['integrations.manage', 'leads.import', 'leads.view.all', 'users.view', 'audit.view'],
   },
   {
+    key: 'video_editor',
+    name: 'Video Editor',
+    description: 'Sees only Tasks (their own) and Media (the whole schedule; updates the entries assigned to them).',
+    // Own tasks need no permission. The app shows this role only the Tasks and Media pages.
+    permissions: ['media.view.all'],
+  },
+  {
     key: 'employee',
     name: 'Sales Employee',
     description: 'Works assigned leads and follow-ups, manages own tasks and feedback.',

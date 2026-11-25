@@ -96,4 +96,8 @@ describe('default roles', () => {
     const p = new Set(emp.permissions as readonly string[]);
     for (const k of ['leads.edit.all', 'tasks.view.all', 'users.manage', 'roles.manage', 'audit.view']) expect(p.has(k)).toBe(false);
   });
+
+  it('video editors see the media schedule and only their own tasks', () => {
+    expect([...role('video_editor')]).toEqual(['media.view.all']);
+  });
 });

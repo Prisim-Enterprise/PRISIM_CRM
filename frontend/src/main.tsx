@@ -1,6 +1,7 @@
 import { ReactNode, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { allowedPages, canOpen } from './lib/pages';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'sonner';
 import '@fontsource-variable/inter-tight';
@@ -45,9 +46,13 @@ const qc = new QueryClient({
 
 function Protected() {
   const { me, loading, denied } = useAuth();
+  const { pathname } = useLocation();
   if (loading) return <Spinner className="h-full items-center" />;
   if (denied) return <NoAccess />;
   if (!me) return <Navigate to="/login" replace />;
+  // Limited roles (e.g. Video Editor) land on their first page and can't open the rest.
+  const allowed = allowedPages(me.roles);
+  if (allowed && !canOpen(allowed, pathname)) return <Navigate to={allowed[0]} replace />;
   return <Layout />;
 }
 

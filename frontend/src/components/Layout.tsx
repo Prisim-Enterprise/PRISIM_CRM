@@ -15,6 +15,7 @@ import { Avatar } from './ui';
 import { ChatPopups } from './ChatPopups';
 import { desktopPermission, notifyDesktop, requestDesktop } from '../lib/desktopNotify';
 import { LOUD_TYPES, playAlertSound, setSoundEnabled, soundEnabled, unlockSoundOnFirstGesture } from '../lib/alertSound';
+import { allowedPages, canOpen } from '../lib/pages';
 
 unlockSoundOnFirstGesture();
 
@@ -171,6 +172,7 @@ export default function Layout() {
   // Shown to anyone with at least one finalised payslip.
   const myPayslips = useQuery({ queryKey: ['my-payslips'], queryFn: () => api.get<unknown[]>('/payroll/me/payslips'), staleTime: 5 * 60_000 });
 
+  const allowed = allowedPages(me?.roles);
   const main = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
     { to: '/leads', label: 'Leads', icon: Users },
@@ -184,14 +186,14 @@ export default function Layout() {
     ...(can('quotations.manage') ? [{ to: '/quotations', label: 'Quotations', icon: FileText }] : []),
     { to: '/feedback', label: 'Feedback & Queries', icon: MessageSquareText },
     ...(myPayslips.data?.length ? [{ to: '/payslips', label: 'My payslips', icon: ReceiptText }] : []),
-  ];
+  ].filter((i) => canOpen(allowed, i.to));
   const admin = [
     can('users.view', 'users.manage', 'teams.manage') && { to: '/admin/users', label: 'Users & Teams', icon: UserCog },
     { to: '/admin/roles', label: 'Roles & Permissions', icon: Shield, show: can('roles.manage', 'users.manage') },
     can('integrations.manage', 'leads.import') && { to: '/admin/integrations', label: 'Integrations', icon: Plug },
     can('audit.view') && { to: '/admin/audit', label: 'Audit Log', icon: ScrollText },
     can('chat.backup.view') && { to: '/admin/chat-backup', label: 'Chat backup', icon: Archive },
-  ].filter((x): x is { to: string; label: string; icon: typeof Plug; show?: boolean } => !!x && (x as { show?: boolean }).show !== false);
+  ].filter((x): x is { to: string; label: string; icon: typeof Plug; show?: boolean } => !!x && (x as { show?: boolean }).show !== false && canOpen(allowed, x.to));
 
   const link = (i: { to: string; label: string; icon: typeof Plug; end?: boolean; badge?: number }) => (
     <NavLink
@@ -209,13 +211,13 @@ export default function Layout() {
 
   const sidebar = (
     <div className="flex h-full flex-col border-r border-slate-200 bg-slate-100">
-      <NavLink to="/" className="flex items-end gap-2 px-5 py-5">
+      <NavLink to={allowed?.[0] ?? '/'} className="flex items-end gap-2 px-5 py-5">
         <img src="/prisim-logo-dark.png" alt="Prisim" className="h-9 w-auto" />
         <span className="mb-0.5 rounded-full bg-indigo-500 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-slate-950">CRM</span>
       </NavLink>
       <nav className="scroll-thin flex-1 space-y-1 overflow-y-auto px-3">
         {main.map(link)}
-        {can('accounting.manage', 'accounting.expenses.submit', 'accounting.payroll.manage') && <AccountingMenu onNavigate={() => setMobileOpen(false)} />}
+        {!allowed && can('accounting.manage', 'accounting.expenses.submit', 'accounting.payroll.manage') && <AccountingMenu onNavigate={() => setMobileOpen(false)} />}
         {admin.length > 0 && <p className="px-3 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Administration</p>}
         {admin.map(link)}
       </nav>
