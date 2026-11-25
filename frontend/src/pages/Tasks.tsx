@@ -79,7 +79,7 @@ interface ClientOption { id: string; name: string; status: string }
 const useClientDirectory = () => useQuery({ queryKey: ['client-directory'], queryFn: () => api.get<ClientOption[]>('/clients/directory'), staleTime: 60_000 });
 
 /** Tick the clients this task is for. Every client is listed, with a search box. */
-function ClientPicker({ value, onChange, disabled }: { value: string[]; onChange: (v: string[]) => void; disabled?: boolean }) {
+export function ClientPicker({ value, onChange, disabled }: { value: string[]; onChange: (v: string[]) => void; disabled?: boolean }) {
   const dir = useClientDirectory();
   const [q, setQ] = useState('');
   const all = dir.data ?? [];

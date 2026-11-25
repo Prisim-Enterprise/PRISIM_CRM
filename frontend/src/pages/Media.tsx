@@ -11,6 +11,7 @@ import { api, errMsg } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useDirectory } from '../lib/hooks';
 import { toLocalInput } from '../lib/format';
+import { ClientPicker } from './Tasks';
 import {
   Badge, Button, Card, Empty, ErrorBox, Field, Input, Modal, PageHeader, Select, Spinner, StatCard, Table, Tabs, Td, Textarea, Th,
 } from '../components/ui';
@@ -21,7 +22,7 @@ type Category = 'MODEL' | 'LOCATION' | 'EQUIPMENT' | 'TRAVEL' | 'FOOD' | 'PROPS'
 interface Person { id: string; fullName: string }
 interface Item {
   id: string; kind: Kind; title: string; scheduledAt: string; status: Status;
-  assignee: Person | null; createdBy: Person; client: { id: string; name: string } | null;
+  assignee: Person | null; createdBy: Person; clients: { id: string; name: string }[];
   platform: string | null; location: string | null; models: string | null; link: string | null; notes: string | null;
   _count: { expenses: number };
   permissions: { canManage: boolean; canUpdate: boolean };
@@ -100,7 +101,7 @@ export default function Media() {
   const clientOptions = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of clientList.data ?? []) m.set(c.id, c.name);
-    for (const i of items.data ?? []) if (i.client) m.set(i.client.id, i.client.name);
+    for (const i of items.data ?? []) for (const c of i.clients) m.set(c.id, c.name);
     return [...m].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   }, [clientList.data, items.data]);
   const summary = useQuery({ queryKey: ['media-summary'], queryFn: () => api.get<Summary>('/media/summary') });
@@ -138,7 +139,7 @@ export default function Media() {
   const newItem = (kind: Kind, at?: Date) => {
     const d = at ? new Date(at) : new Date();
     if (at) d.setHours(10, 0, 0, 0);
-    setEditing({ kind, scheduledAt: d.toISOString(), status: 'PLANNED' });
+    setEditing({ kind, scheduledAt: d.toISOString(), status: 'PLANNED', clients: pickedClient ? [pickedClient] : [] });
   };
 
   return (
@@ -398,7 +399,7 @@ function DayAgenda({ date, entries, onClose, onOpen, onAdd, onAddScript }: {
                     </div>
                     {i.notes && <p className="mt-1 whitespace-pre-line text-sm text-slate-600">{i.notes}</p>}
                     <p className="mt-1 text-xs text-slate-500">
-                      {[i.assignee?.fullName ?? 'Not assigned', i.client?.name, i.kind === 'SHOOT' ? i.location : i.platform].filter(Boolean).join(' · ')}
+                      {[i.assignee?.fullName ?? 'Not assigned', i.clients.map((c) => c.name).join(', '), i.kind === 'SHOOT' ? i.location : i.platform].filter(Boolean).join(' · ')}
                     </p>
                   </div>
                 </button>
@@ -426,7 +427,6 @@ function ItemModal({ item, onClose, onSaved, onAddExpense, readOnly = false, cos
   const manage = can('media.manage');
   const full = !readOnly && (isNew || manage); // Assignees may only change status, link and notes.
   const locked = readOnly || (!isNew && !item.permissions?.canUpdate);
-  const clients = useQuery({ queryKey: ['clients', '', ''], queryFn: () => api.get<{ id: string; name: string }[]>('/clients', {}), enabled: full, staleTime: 60_000 });
   const shootCosts = useQuery({
     queryKey: ['media-expenses', 'shoot', item.id],
     queryFn: () => api.get<Expenses>('/media-expenses', { shootId: item.id }),
@@ -434,7 +434,7 @@ function ItemModal({ item, onClose, onSaved, onAddExpense, readOnly = false, cos
   });
   const [f, setF] = useState({
     kind: item.kind ?? 'SHOOT', title: item.title ?? '', when: item.scheduledAt ? toLocalInput(new Date(item.scheduledAt)) : '',
-    status: item.status ?? 'PLANNED', assigneeId: item.assignee?.id ?? '', clientId: item.client?.id ?? '', platform: item.platform ?? '',
+    status: item.status ?? 'PLANNED', assigneeId: item.assignee?.id ?? '', clientIds: (item.clients ?? []).map((c) => c.id), platform: item.platform ?? '',
     location: item.location ?? '', models: item.models ?? '', link: item.link ?? '', notes: item.notes ?? '',
   });
   const [busy, setBusy] = useState(false);
@@ -446,7 +446,7 @@ function ItemModal({ item, onClose, onSaved, onAddExpense, readOnly = false, cos
     try {
       const body = full ? {
         kind: f.kind, title: f.title.trim(), scheduledAt: new Date(f.when).toISOString(), status: f.status,
-        assigneeId: f.assigneeId || null, clientId: f.clientId, platform: shoot ? null : f.platform || null,
+        assigneeId: f.assigneeId || null, clientIds: f.clientIds, platform: shoot ? null : f.platform || null,
         location: shoot ? f.location || null : null, models: shoot ? f.models || null : null, link: f.link || null, notes: f.notes || null,
       } : { status: f.status, link: f.link || null, notes: f.notes || null };
       if (isNew) await api.post('/media', body); else await api.patch(`/media/${item.id}`, body);
@@ -467,7 +467,7 @@ function ItemModal({ item, onClose, onSaved, onAddExpense, readOnly = false, cos
       footer={<>
         {!isNew && manage && !readOnly && <Button variant="ghost" className="mr-auto text-rose-600 hover:bg-rose-50" onClick={remove} disabled={busy}><Trash2 className="h-4 w-4" />Delete</Button>}
         <Button variant="secondary" onClick={onClose}>{readOnly ? 'Close' : 'Cancel'}</Button>
-        {!readOnly && <Button loading={busy} onClick={save} disabled={!item.permissions?.canUpdate && !isNew || (full && (f.title.trim().length < 2 || !f.when || !f.clientId))}>{isNew ? 'Add' : 'Save'}</Button>}
+        {!readOnly && <Button loading={busy} onClick={save} disabled={!item.permissions?.canUpdate && !isNew || (full && (f.title.trim().length < 2 || !f.when || !f.clientIds.length))}>{isNew ? 'Add' : 'Save'}</Button>}
       </>}>
       {full && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -502,13 +502,6 @@ function ItemModal({ item, onClose, onSaved, onAddExpense, readOnly = false, cos
             <datalist id="media-platforms">{PLATFORMS.map((p) => <option key={p} value={p} />)}</datalist>
           </Field>
         )}
-        <Field label="Client *" hint={full && clients.data && !clients.data.length ? 'No clients yet. Add one on the Clients page first.' : undefined}>
-          <Select value={f.clientId} onChange={(e) => set({ clientId: e.target.value })} disabled={!full} required aria-required="true">
-            <option value="" disabled>Choose a client</option>
-            {clients.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            {item.client && !clients.data?.some((c) => c.id === item.client!.id) && <option value={item.client.id}>{item.client.name}</option>}
-          </Select>
-        </Field>
         <Field label="Status">
           <Select value={f.status} onChange={(e) => set({ status: e.target.value as Status })} disabled={locked}>
             {(Object.keys(MEDIA_STATUS) as Status[]).map((s) => <option key={s} value={s}>{statusLabel(f.kind as Kind, s)}</option>)}
@@ -518,6 +511,10 @@ function ItemModal({ item, onClose, onSaved, onAddExpense, readOnly = false, cos
           <Input value={f.link} onChange={(e) => set({ link: e.target.value })} disabled={locked} placeholder="https://…" />
         </Field>
       </div>
+      <Field label="Clients *" hint={full ? 'Choose one or more. Add new clients on the Clients page.' : undefined}>
+        {full ? <ClientPicker value={f.clientIds} onChange={(v) => set({ clientIds: v })} />
+          : <p className="text-sm text-slate-700">{item.clients?.length ? item.clients.map((c) => c.name).join(', ') : <span className="text-slate-400">No client</span>}</p>}
+      </Field>
       <Field label="What happens"><Textarea rows={4} value={f.notes} onChange={(e) => set({ notes: e.target.value })} disabled={locked}
         placeholder={shoot ? 'What is being shot, shot list, props, timings…' : f.kind === 'CONTENT' ? 'What the piece covers, brief, word count…' : 'What the post is about, caption, hashtags…'} /></Field>
       {readOnly && <p className="text-xs text-slate-500">View only. To change this, open it from the Calendar tab.</p>}

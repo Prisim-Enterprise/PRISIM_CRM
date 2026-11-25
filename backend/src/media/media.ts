@@ -5,7 +5,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
-  IsBoolean, IsDateString, IsEnum, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateIf,
+  ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsDateString, IsEnum, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateIf,
 } from 'class-validator';
 import { MediaExpenseCategory, MediaKind, MediaScriptStatus, MediaStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -33,8 +33,9 @@ class CreateItemDto {
   @IsDateString() scheduledAt: string;
   @IsOptional() @IsEnum(MediaStatus) status?: MediaStatus;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() assigneeId?: string | null;
-  /** Every schedule entry is for a client. */
-  @IsUUID('all', { message: 'Choose the client this is for' }) clientId: string;
+  /** Every schedule entry is for at least one client. */
+  @IsArray() @ArrayMinSize(1, { message: 'Choose at least one client' }) @ArrayMaxSize(50) @ArrayUnique()
+  @IsUUID('all', { each: true, message: 'Choose the clients this is for' }) clientIds: string[];
   @OptText(60) platform?: string | null;
   @OptText(300) location?: string | null;
   @OptText(500) models?: string | null;
@@ -48,8 +49,9 @@ class UpdateItemDto {
   @IsOptional() @IsDateString() scheduledAt?: string;
   @IsOptional() @IsEnum(MediaStatus) status?: MediaStatus;
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsUUID() assigneeId?: string | null;
-  /** Can be changed to another client, but not removed. */
-  @ValidateIf((_, v) => v !== undefined) @IsUUID('all', { message: 'Choose the client this is for' }) clientId?: string;
+  /** Can be changed to other clients, but never to none. */
+  @ValidateIf((_, v) => v !== undefined) @IsArray() @ArrayMinSize(1, { message: 'Choose at least one client' }) @ArrayMaxSize(50) @ArrayUnique()
+  @IsUUID('all', { each: true, message: 'Choose the clients this is for' }) clientIds?: string[];
   @OptText(60) platform?: string | null;
   @OptText(300) location?: string | null;
   @OptText(500) models?: string | null;
@@ -117,7 +119,7 @@ const scriptInclude = { client: { select: { id: true, name: true } }, writer: pe
 const itemInclude = {
   assignee: person,
   createdBy: person,
-  client: { select: { id: true, name: true } },
+  clients: { select: { client: { select: { id: true, name: true } } }, orderBy: { client: { name: 'asc' } } },
   _count: { select: { expenses: true } },
 } satisfies Prisma.MediaItemInclude;
 
@@ -139,18 +141,21 @@ export class MediaService {
     return this.seesAll(u) ? {} : { OR: [{ assigneeId: u.id }, { createdById: u.id }] };
   }
 
-  private async checkLinks(dto: { assigneeId?: string | null; clientId?: string | null }) {
+  private async checkLinks(dto: { assigneeId?: string | null; clientId?: string | null; clientIds?: string[] }) {
     if (dto.assigneeId && !(await this.prisma.user.count({ where: { id: dto.assigneeId, isActive: true, deletedAt: null } }))) {
       throw new BadRequestException('That person is inactive or does not exist');
     }
     if (dto.clientId && !(await this.prisma.client.count({ where: { id: dto.clientId } }))) {
       throw new BadRequestException('That client does not exist');
     }
+    if (dto.clientIds?.length && (await this.prisma.client.count({ where: { id: { in: dto.clientIds } } })) !== dto.clientIds.length) {
+      throw new BadRequestException('One of those clients does not exist');
+    }
   }
 
-  private decorate(u: AuthUser, i: Prisma.MediaItemGetPayload<{ include: typeof itemInclude }>) {
+  private decorate(u: AuthUser, { clients, ...i }: Prisma.MediaItemGetPayload<{ include: typeof itemInclude }>) {
     const mine = i.assigneeId === u.id;
-    return { ...i, permissions: { canManage: this.manages(u), canUpdate: this.manages(u) || mine } };
+    return { ...i, clients: clients.map((c) => c.client), permissions: { canManage: this.manages(u), canUpdate: this.manages(u) || mine } };
   }
 
   async list(u: AuthUser, q: ItemQuery) {
@@ -160,7 +165,7 @@ export class MediaService {
     if (q.from) and.push({ scheduledAt: { gte: new Date(q.from) } });
     if (q.to) and.push({ scheduledAt: { lt: new Date(q.to) } });
     if (q.assignee) and.push({ assigneeId: q.assignee === 'me' ? u.id : q.assignee });
-    if (q.client) and.push({ clientId: q.client === 'none' ? null : q.client });
+    if (q.client) and.push(q.client === 'none' ? { clients: { none: {} } } : { clients: { some: { clientId: q.client } } });
     const items = await this.prisma.mediaItem.findMany({ where: { AND: and }, include: itemInclude, orderBy: { scheduledAt: 'asc' }, take: 1000 });
     return items.map((i) => this.decorate(u, i));
   }
@@ -185,12 +190,13 @@ export class MediaService {
     const i = await this.prisma.mediaItem.create({
       data: {
         kind: dto.kind, title: dto.title.trim(), scheduledAt: new Date(dto.scheduledAt), status: dto.status ?? 'PLANNED',
-        assigneeId: dto.assigneeId ?? null, clientId: dto.clientId, platform: dto.platform, location: dto.location,
+        assigneeId: dto.assigneeId ?? null, platform: dto.platform, location: dto.location,
         models: dto.models, link: dto.link, notes: dto.notes, createdById: u.id,
+        clients: { create: dto.clientIds.map((clientId) => ({ clientId })) },
       },
       include: itemInclude,
     });
-    await this.audit.record({ actorId: u.id, action: 'media.created', entityType: 'media', entityId: i.id, after: { kind: i.kind, title: i.title, scheduledAt: i.scheduledAt } });
+    await this.audit.record({ actorId: u.id, action: 'media.created', entityType: 'media', entityId: i.id, after: { kind: i.kind, title: i.title, scheduledAt: i.scheduledAt, clientIds: dto.clientIds } });
     if (i.assigneeId && i.assigneeId !== u.id) await this.tellAssignee(i);
     return this.decorate(u, i);
   }
@@ -203,7 +209,7 @@ export class MediaService {
   }
 
   async update(u: AuthUser, id: string, dto: UpdateItemDto) {
-    const before = await this.prisma.mediaItem.findFirst({ where: { AND: [{ id }, this.visible(u)] } });
+    const before = await this.prisma.mediaItem.findFirst({ where: { AND: [{ id }, this.visible(u)] }, include: { clients: { select: { clientId: true } } } });
     if (!before) throw new NotFoundException('Schedule entry not found');
     if (!this.manages(u)) {
       if (before.assigneeId !== u.id) throw new ForbiddenException('Only the person assigned, or a media manager, can update this');
@@ -215,12 +221,16 @@ export class MediaService {
       where: { id },
       data: {
         kind: dto.kind, title: dto.title?.trim(), scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : undefined, status: dto.status,
-        assigneeId: dto.assigneeId, clientId: dto.clientId, platform: dto.platform, location: dto.location, models: dto.models, link: dto.link, notes: dto.notes,
+        assigneeId: dto.assigneeId, platform: dto.platform, location: dto.location, models: dto.models, link: dto.link, notes: dto.notes,
+        clients: dto.clientIds ? { deleteMany: {}, create: dto.clientIds.map((clientId) => ({ clientId })) } : undefined,
       },
       include: itemInclude,
     });
-    const keys = ['kind', 'title', 'scheduledAt', 'status', 'assigneeId', 'clientId', 'platform', 'location', 'models', 'link', 'notes'] as const;
-    const changed = Object.fromEntries(keys.filter((k) => String(before[k]) !== String(i[k])).map((k) => [k, { from: before[k], to: i[k] }]));
+    const keys = ['kind', 'title', 'scheduledAt', 'status', 'assigneeId', 'platform', 'location', 'models', 'link', 'notes'] as const;
+    const changed: Record<string, unknown> = Object.fromEntries(keys.filter((k) => String(before[k]) !== String(i[k])).map((k) => [k, { from: before[k], to: i[k] }]));
+    const oldClients = before.clients.map((c) => c.clientId).sort();
+    const newClients = i.clients.map((c) => c.client.id).sort();
+    if (oldClients.join() !== newClients.join()) changed.clientIds = { from: oldClients, to: newClients };
     if (Object.keys(changed).length) await this.audit.record({ actorId: u.id, action: 'media.updated', entityType: 'media', entityId: id, after: changed });
     if (i.assigneeId && i.assigneeId !== before.assigneeId && i.assigneeId !== u.id) await this.tellAssignee(i);
     return this.decorate(u, i);
