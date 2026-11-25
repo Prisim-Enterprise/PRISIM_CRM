@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import {
   addDays, addMonths, endOfMonth, format, isSameDay, isSameMonth, startOfMonth, startOfWeek,
 } from 'date-fns';
-import { Camera, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, FileText, Image, IndianRupee, PenLine, Plus, Trash2 } from 'lucide-react';
+import { Camera, CheckCircle2, Hourglass, ChevronLeft, ChevronRight, Clapperboard, FileText, Image, IndianRupee, PenLine, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, errMsg } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -17,7 +17,7 @@ import {
 } from '../components/ui';
 
 type Kind = 'SHOOT' | 'REEL' | 'CONTENT' | 'IMAGE';
-type Status = 'PLANNED' | 'IN_PROGRESS' | 'READY' | 'DONE' | 'CANCELLED';
+type Status = 'PLANNED' | 'IN_PROGRESS' | 'READY' | 'AWAITING_APPROVAL' | 'APPROVED' | 'DONE' | 'CANCELLED';
 type Category = 'MODEL' | 'LOCATION' | 'EQUIPMENT' | 'TRAVEL' | 'FOOD' | 'PROPS' | 'OTHER';
 interface Person { id: string; fullName: string }
 interface Item {
@@ -54,12 +54,13 @@ export const MEDIA_STATUS: Record<Status, { label: string; color: string }> = {
   PLANNED: { label: 'Planned', color: 'bg-slate-100 text-slate-700' },
   IN_PROGRESS: { label: 'In progress', color: 'bg-blue-100 text-blue-800' },
   READY: { label: 'Ready', color: 'bg-violet-100 text-violet-800' },
-  DONE: { label: 'Done', color: 'bg-green-100 text-green-800' },
+  AWAITING_APPROVAL: { label: 'Waiting for client approval', color: 'bg-amber-100 text-amber-800' },
+  APPROVED: { label: 'Approved', color: 'bg-teal-100 text-teal-800' },
+  DONE: { label: 'Posted', color: 'bg-green-100 text-green-800' },
   CANCELLED: { label: 'Cancelled', color: 'bg-slate-200 text-slate-500 line-through' },
 };
-/** "Done" reads as "Posted" for things that get posted. */
-const doneLabel = (k: Kind) => (k === 'REEL' || k === 'IMAGE' ? 'Posted' : k === 'SHOOT' ? 'Shot' : 'Written');
-const statusLabel = (k: Kind, s: Status) => (s === 'DONE' ? doneLabel(k) : MEDIA_STATUS[s].label);
+// Every type goes Waiting for client approval → Approved → Posted.
+const statusLabel = (_k: Kind, s: Status) => MEDIA_STATUS[s].label;
 const CATEGORY: Record<Category, string> = {
   MODEL: 'Model fee', LOCATION: 'Location', EQUIPMENT: 'Equipment', TRAVEL: 'Travel', FOOD: 'Food', PROPS: 'Props & styling', OTHER: 'Other',
 };
@@ -315,8 +316,10 @@ function Calendar({ month, from, to, items, scripts, onOpen, onOpenScript, onAdd
                 <div className="space-y-1">
                   {list.slice(0, MAX_PER_DAY).map((e) => e.type === 'item' ? (
                     <button key={e.item.id} onClick={(ev) => { ev.stopPropagation(); onOpen(e.item); }}
-                      title={[`${KIND[e.item.kind].label}: ${e.item.title}`, e.item.assignee ? `With ${e.item.assignee.fullName}` : null, e.item.notes].filter(Boolean).join('\n')}
+                      title={[`${KIND[e.item.kind].label}: ${e.item.title}`, MEDIA_STATUS[e.item.status].label, e.item.assignee ? `With ${e.item.assignee.fullName}` : null, e.item.notes].filter(Boolean).join('\n')}
                       className={clsx('block w-full truncate rounded-md border px-1.5 py-0.5 text-left text-[11px] leading-4', KIND[e.item.kind].chip, !isOpen(e.item.status) && 'opacity-60', e.item.status === 'CANCELLED' && 'line-through')}>
+                      {e.item.status === 'AWAITING_APPROVAL' && <Hourglass className="mr-0.5 inline h-3 w-3 text-amber-600" aria-label="Waiting for client approval" />}
+                      {e.item.status === 'APPROVED' && <CheckCircle2 className="mr-0.5 inline h-3 w-3 text-teal-600" aria-label="Approved" />}
                       <span className="font-semibold">{format(new Date(e.item.scheduledAt), 'h:mm')}</span> {e.item.title}
                       {e.item.assignee && <span className="opacity-70"> · {e.item.assignee.fullName.split(' ')[0]}</span>}
                     </button>
