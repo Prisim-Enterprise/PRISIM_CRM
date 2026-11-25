@@ -38,8 +38,8 @@ const COLUMNS = ['TODO', 'IN_PROGRESS', 'REVIEW', 'BLOCKED', 'DONE'];
 function useAssignees() {
   const { me, can } = useAuth();
   const dir = useDirectory();
+  if (can('tasks.assign.anyone') || can('tasks.manage.all')) return dir.data ?? [];
   if (!can('tasks.create_for_others')) return dir.data?.filter((u) => u.id === me?.id) ?? [];
-  if (can('tasks.manage.all')) return dir.data ?? [];
   return dir.data?.filter((u) => u.id === me?.id || sharesTeam(u, me?.teamIds)) ?? [];
 }
 

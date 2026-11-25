@@ -23,6 +23,7 @@ export const PERMISSIONS = {
   'tasks.manage.all': ['Tasks', 'Edit, reassign and review any task'],
   'tasks.manage.team': ['Tasks', 'No longer used: only the creator and admins can edit a task'],
   'tasks.create_for_others': ['Tasks', 'Create tasks for other people (anyone with manage-all, otherwise own team)'],
+  'tasks.assign.anyone': ['Tasks', 'Assign work to anyone in the organisation, not just own team'],
   // Feedback
   'feedback.view.all': ['Feedback', 'View all feedback and queries'],
   'feedback.manage': ['Feedback', 'Respond to, assign and resolve feedback'],

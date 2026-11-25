@@ -144,10 +144,11 @@ export class TasksService {
   private async assertCanAssignTo(user: AuthUser, assigneeIds: string[]) {
     const others = assigneeIds.filter((id) => id !== user.id);
     if (!others.length) return;
-    if (!user.permissions.has('tasks.create_for_others')) throw new ForbiddenException('You can only create tasks for yourself');
+    const anyone = user.permissions.has('tasks.assign.anyone') || user.permissions.has('tasks.manage.all');
+    if (!anyone && !user.permissions.has('tasks.create_for_others')) throw new ForbiddenException('You can only create tasks for yourself');
     const found = await this.prisma.user.count({ where: { id: { in: others }, isActive: true, deletedAt: null } });
     if (found !== others.length) throw new BadRequestException('One or more people are inactive or do not exist');
-    if (user.permissions.has('tasks.manage.all')) return;
+    if (anyone) return;
     const team = await this.access.teamMemberIds(user);
     if (others.every((id) => team.includes(id))) return;
     throw new ForbiddenException('You can only assign tasks to members of your team');
