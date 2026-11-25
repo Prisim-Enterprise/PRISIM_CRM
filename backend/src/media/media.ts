@@ -2,7 +2,7 @@ import {
   BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Injectable, Module, NotFoundException,
   Param, ParseUUIDPipe, Patch, Post, Query,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags, OmitType } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsDateString, IsEnum, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateIf,
@@ -41,6 +41,12 @@ class CreateItemDto {
   @OptText(500) models?: string | null;
   @OptText(1000) link?: string | null;
   @OptText(10000) notes?: string | null;
+}
+
+/** The same entry on several days at once: picked days, or every day in a range. */
+class BatchItemDto extends OmitType(CreateItemDto, ['scheduledAt'] as const) {
+  @IsArray() @ArrayMinSize(1, { message: 'Choose at least one day' }) @ArrayMaxSize(92, { message: 'Schedule up to 92 days at a time' }) @ArrayUnique()
+  @IsDateString({}, { each: true }) scheduledAts: string[];
 }
 
 class UpdateItemDto {
@@ -199,6 +205,37 @@ export class MediaService {
     await this.audit.record({ actorId: u.id, action: 'media.created', entityType: 'media', entityId: i.id, after: { kind: i.kind, title: i.title, scheduledAt: i.scheduledAt, clientIds: dto.clientIds } });
     if (i.assigneeId && i.assigneeId !== u.id) await this.tellAssignee(i);
     return this.decorate(u, i);
+  }
+
+  /** One entry per day, all or nothing. The assignee gets one notification for the lot. */
+  async createMany(u: AuthUser, dto: BatchItemDto) {
+    await this.checkLinks(dto);
+    const when = [...dto.scheduledAts].map((d) => new Date(d)).sort((a, b) => a.getTime() - b.getTime());
+    const items = await this.prisma.$transaction(when.map((scheduledAt) => this.prisma.mediaItem.create({
+      data: {
+        kind: dto.kind, title: dto.title.trim(), scheduledAt, status: dto.status ?? 'PLANNED',
+        assigneeId: dto.assigneeId ?? null, platform: dto.platform, location: dto.location,
+        models: dto.models, link: dto.link, notes: dto.notes, createdById: u.id,
+        clients: { create: dto.clientIds.map((clientId) => ({ clientId })) },
+      },
+      include: itemInclude,
+    })));
+    await this.audit.record({
+      actorId: u.id, action: 'media.created', entityType: 'media', entityId: items[0].id,
+      after: { kind: dto.kind, title: dto.title.trim(), days: items.length, ids: items.map((i) => i.id), scheduledAts: when, clientIds: dto.clientIds },
+    });
+    const first = items[0];
+    if (first.assigneeId && first.assigneeId !== u.id) {
+      if (items.length === 1) await this.tellAssignee(first);
+      else {
+        const fmt = (d: Date) => d.toLocaleDateString('en-IN', { timeZone: process.env.APP_TIMEZONE || 'Asia/Kolkata', day: 'numeric', month: 'short' });
+        await this.notifications.notify(first.assigneeId, {
+          type: 'media.assigned', title: `${KIND_LABEL[first.kind]} assigned to you on ${items.length} days: ${first.title}`,
+          body: `${fmt(when[0])} to ${fmt(when[when.length - 1])}`, link: `/media?item=${first.id}`,
+        });
+      }
+    }
+    return { created: items.length, items: items.map((i) => this.decorate(u, i)) };
   }
 
   private tellAssignee(i: { id: string; kind: MediaKind; title: string; scheduledAt: Date; assigneeId: string | null }) {
@@ -389,6 +426,7 @@ export class MediaController {
 
   @Get('media') list(@CurrentUser() u: AuthUser, @Query() q: ItemQuery) { return this.svc.list(u, q); }
   @Get('media/summary') summary(@CurrentUser() u: AuthUser) { return this.svc.summary(u); }
+  @Post('media/batch') @RequireAny('media.manage') createMany(@CurrentUser() u: AuthUser, @Body() dto: BatchItemDto) { return this.svc.createMany(u, dto); }
   @Post('media') @RequireAny('media.manage') create(@CurrentUser() u: AuthUser, @Body() dto: CreateItemDto) { return this.svc.create(u, dto); }
   @Patch('media/:id') update(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateItemDto) { return this.svc.update(u, id, dto); }
   @Delete('media/:id') @RequireAny('media.manage') remove(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string) { return this.svc.remove(u, id); }

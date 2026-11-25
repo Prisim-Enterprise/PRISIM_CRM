@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
-  addDays, addMonths, endOfMonth, format, isSameDay, isSameMonth, startOfMonth, startOfWeek,
+  addDays, addMonths, differenceInCalendarDays, endOfMonth, format, isSameDay, isSameMonth, parseISO, startOfMonth, startOfWeek,
 } from 'date-fns';
 import { Camera, CheckCircle2, Hourglass, ChevronLeft, ChevronRight, Clapperboard, FileText, Image, IndianRupee, PenLine, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -443,17 +443,40 @@ function ItemModal({ item, onClose, onSaved, onAddExpense, readOnly = false, cos
   const [busy, setBusy] = useState(false);
   const set = (c: Partial<typeof f>) => setF({ ...f, ...c });
   const shoot = f.kind === 'SHOOT';
+  // New entries can go on one day, several picked days, or every day in a range.
+  const firstDay = f.when ? f.when.slice(0, 10) : format(new Date(), 'yyyy-MM-dd');
+  const [dayMode, setDayMode] = useState<DayMode>('one');
+  const [days, setDays] = useState<string[]>([firstDay]);
+  const [range, setRange] = useState({ from: firstDay, to: firstDay });
+  const [time, setTime] = useState(f.when ? f.when.slice(11, 16) : '10:00');
+  const rangeDays = useMemo(() => {
+    if (!range.from || !range.to) return [];
+    const a = parseISO(range.from), n = differenceInCalendarDays(parseISO(range.to), a);
+    return n < 0 || n >= MAX_DAYS ? [] : Array.from({ length: n + 1 }, (_, i) => format(addDays(a, i), 'yyyy-MM-dd'));
+  }, [range]);
+  const chosenDays = dayMode === 'pick' ? [...days].sort() : dayMode === 'range' ? rangeDays : [];
+  const many = isNew && dayMode !== 'one';
+  const rangeError = dayMode === 'range' && range.from && range.to
+    ? range.to < range.from ? 'The end date is before the start date' : !rangeDays.length ? `Choose up to ${MAX_DAYS} days` : null
+    : null;
+  const whenOk = many ? chosenDays.length > 0 && chosenDays.length <= MAX_DAYS && !!time : !!f.when;
 
   const save = async () => {
     setBusy(true);
     try {
       const body = full ? {
-        kind: f.kind, title: f.title.trim(), scheduledAt: new Date(f.when).toISOString(), status: f.status,
+        kind: f.kind, title: f.title.trim(), scheduledAt: many ? undefined : new Date(f.when).toISOString(), status: f.status,
         assigneeId: f.assigneeId || null, clientIds: f.clientIds, platform: shoot ? null : f.platform || null,
         location: shoot ? f.location || null : null, models: shoot ? f.models || null : null, link: f.link || null, notes: f.notes || null,
       } : { status: f.status, link: f.link || null, notes: f.notes || null };
-      if (isNew) await api.post('/media', body); else await api.patch(`/media/${item.id}`, body);
-      toast.success(isNew ? 'Added to the schedule' : 'Saved');
+      if (many) {
+        const { scheduledAt: _one, ...rest } = body as { scheduledAt?: string };
+        const r = await api.post<{ created: number }>('/media/batch', { ...rest, scheduledAts: chosenDays.map((d) => new Date(`${d}T${time}`).toISOString()) });
+        toast.success(`Added on ${r.created} day${r.created === 1 ? '' : 's'}`);
+      } else {
+        if (isNew) await api.post('/media', body); else await api.patch(`/media/${item.id}`, body);
+        toast.success(isNew ? 'Added to the schedule' : 'Saved');
+      }
       onSaved(); onClose();
     } catch (e) { toast.error(errMsg(e)); } finally { setBusy(false); }
   };
@@ -470,7 +493,7 @@ function ItemModal({ item, onClose, onSaved, onAddExpense, readOnly = false, cos
       footer={<>
         {!isNew && manage && !readOnly && <Button variant="ghost" className="mr-auto text-rose-600 hover:bg-rose-50" onClick={remove} disabled={busy}><Trash2 className="h-4 w-4" />Delete</Button>}
         <Button variant="secondary" onClick={onClose}>{readOnly ? 'Close' : 'Cancel'}</Button>
-        {!readOnly && <Button loading={busy} onClick={save} disabled={!item.permissions?.canUpdate && !isNew || (full && (f.title.trim().length < 2 || !f.when || !f.clientIds.length))}>{isNew ? 'Add' : 'Save'}</Button>}
+        {!readOnly && <Button loading={busy} onClick={save} disabled={!item.permissions?.canUpdate && !isNew || (full && (f.title.trim().length < 2 || !whenOk || !f.clientIds.length))}>{many && chosenDays.length > 1 ? `Add on ${chosenDays.length} days` : isNew ? 'Add' : 'Save'}</Button>}
       </>}>
       {full && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -487,8 +510,44 @@ function ItemModal({ item, onClose, onSaved, onAddExpense, readOnly = false, cos
       )}
       <Field label="Title"><Input value={f.title} onChange={(e) => set({ title: e.target.value })} disabled={!full} autoFocus={isNew}
         placeholder={shoot ? 'e.g. Diwali collection shoot' : f.kind === 'CONTENT' ? 'e.g. Blog: 5 interior trends' : 'e.g. Product launch reel'} /></Field>
+      {isNew && full && (
+        <div className="space-y-2 rounded-xl border border-slate-200 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-medium text-slate-700">{shoot ? 'Shoot days' : f.kind === 'CONTENT' ? 'Due days' : 'Posting days'}</span>
+            <div className="inline-flex rounded-lg border border-slate-200 p-0.5 text-xs" role="radiogroup" aria-label="How to choose days">
+              {(Object.keys(DAY_MODES) as DayMode[]).map((m) => (
+                <button key={m} type="button" role="radio" aria-checked={dayMode === m} onClick={() => setDayMode(m)}
+                  className={clsx('rounded-md px-2.5 py-1 font-medium transition', dayMode === m ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50')}>{DAY_MODES[m]}</button>
+              ))}
+            </div>
+          </div>
+          {dayMode === 'one' && <Input type="datetime-local" value={f.when} onChange={(e) => set({ when: e.target.value })} aria-label="Date and time" />}
+          {dayMode === 'pick' && (
+            <div className="grid gap-3 sm:grid-cols-[auto_1fr]">
+              <DayPicker value={days} onChange={setDays} />
+              <div className="space-y-2">
+                <Field label="Time on each day"><Input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></Field>
+                <p className="text-xs text-slate-500">Click days on the calendar to add or remove them.</p>
+                {days.length > 0 && <p className="text-xs text-slate-600"><span className="font-semibold">{days.length} day{days.length === 1 ? '' : 's'}:</span> {[...days].sort().map((d) => format(parseISO(d), 'd MMM')).join(', ')}</p>}
+                {days.length > MAX_DAYS && <p className="text-xs text-rose-600">Choose up to {MAX_DAYS} days.</p>}
+              </div>
+            </div>
+          )}
+          {dayMode === 'range' && (
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Field label="From"><Input type="date" value={range.from} onChange={(e) => setRange({ from: e.target.value, to: range.to < e.target.value ? e.target.value : range.to })} /></Field>
+              <Field label="To"><Input type="date" value={range.to} min={range.from} onChange={(e) => setRange({ ...range, to: e.target.value })} /></Field>
+              <Field label="Time on each day"><Input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></Field>
+              <p className={clsx('text-xs sm:col-span-3', rangeError ? 'text-rose-600' : 'text-slate-600')}>
+                {rangeError ?? (rangeDays.length ? `${rangeDays.length} day${rangeDays.length === 1 ? '' : 's'}, every day from ${format(parseISO(range.from), 'd MMM')} to ${format(parseISO(range.to), 'd MMM')}` : 'Choose the first and last day')}
+              </p>
+            </div>
+          )}
+          {many && <p className="text-xs text-slate-500">Each day becomes its own entry, so each one can be updated and marked posted separately.</p>}
+        </div>
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label={shoot ? 'Shoot date and time' : f.kind === 'CONTENT' ? 'Due' : 'Post on'}><Input type="datetime-local" value={f.when} onChange={(e) => set({ when: e.target.value })} disabled={!full} /></Field>
+        {!(isNew && full) && <Field label={shoot ? 'Shoot date and time' : f.kind === 'CONTENT' ? 'Due' : 'Post on'}><Input type="datetime-local" value={f.when} onChange={(e) => set({ when: e.target.value })} disabled={!full} /></Field>}
         <Field label={shoot ? 'Who is in charge' : f.kind === 'CONTENT' ? 'Writer' : 'Who posts it'}>
           <Select value={f.assigneeId} onChange={(e) => set({ assigneeId: e.target.value })} disabled={!full}>
             <option value="">Not assigned</option>
@@ -743,5 +802,42 @@ function ExpenseModal({ expense, onClose, onSaved }: { expense: Partial<Expense>
       <Field label="Details"><Textarea rows={2} value={f.description} onChange={(e) => set({ description: e.target.value })} placeholder="Half day, travel included, invoice number…" /></Field>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={f.paid} onChange={(e) => set({ paid: e.target.checked })} />Already paid</label>
     </Modal>
+  );
+}
+
+type DayMode = 'one' | 'pick' | 'range';
+const DAY_MODES: Record<DayMode, string> = { one: 'One day', pick: 'Several days', range: 'Date range' };
+const MAX_DAYS = 92;
+
+/** A small month calendar: click days to add or remove them. Values are yyyy-MM-dd. */
+function DayPicker({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const [month, setMonth] = useState(() => startOfMonth(value.length ? parseISO([...value].sort()[0]) : new Date()));
+  const start = startOfWeek(month, { weekStartsOn: 1 });
+  const cells = Array.from({ length: 42 }, (_, i) => addDays(start, i));
+  const today = new Date();
+  const toggle = (k: string) => onChange(value.includes(k) ? value.filter((x) => x !== k) : [...value, k]);
+  return (
+    <div className="w-64 select-none">
+      <div className="mb-1 flex items-center justify-between">
+        <button type="button" onClick={() => setMonth(addMonths(month, -1))} className="rounded-md p-1 text-slate-500 hover:bg-slate-100" aria-label="Previous month"><ChevronLeft className="h-4 w-4" /></button>
+        <span className="text-sm font-semibold">{format(month, 'MMMM yyyy')}</span>
+        <button type="button" onClick={() => setMonth(addMonths(month, 1))} className="rounded-md p-1 text-slate-500 hover:bg-slate-100" aria-label="Next month"><ChevronRight className="h-4 w-4" /></button>
+      </div>
+      <div className="grid grid-cols-7 gap-0.5 text-center text-[11px]">
+        {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => <div key={i} className="py-0.5 font-semibold text-slate-400">{d}</div>)}
+        {cells.map((d) => {
+          const k = format(d, 'yyyy-MM-dd');
+          const on = value.includes(k);
+          return (
+            <button key={k} type="button" onClick={() => toggle(k)} aria-pressed={on} aria-label={format(d, 'EEEE d MMMM')}
+              className={clsx('h-8 rounded-md text-xs transition', on ? 'bg-indigo-600 font-semibold text-white hover:bg-indigo-700' : 'hover:bg-slate-100',
+                !on && !isSameMonth(d, month) && 'text-slate-300', !on && isSameDay(d, today) && 'ring-1 ring-inset ring-indigo-300')}>
+              {format(d, 'd')}
+            </button>
+          );
+        })}
+      </div>
+      {value.length > 0 && <button type="button" onClick={() => onChange([])} className="mt-1 text-xs text-slate-500 hover:text-slate-700">Clear</button>}
+    </div>
   );
 }
