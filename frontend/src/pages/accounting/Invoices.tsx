@@ -1,4 +1,5 @@
-import { Fragment, ReactNode, useEffect, useMemo, useState } from 'react';
+import { Fragment, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -538,6 +539,8 @@ function InvoiceEditor() {
   const lookups = useLookups();
   /** Which copies the next print includes: both, or just one so it can be saved as its own PDF. */
   const [printing, setPrinting] = useState<readonly Copy[]>(COPIES);
+  const [paper, setPaperState] = useState<Paper>(savedPaper);
+  const setPaper = (p: Paper) => { setPaperState(p); try { localStorage.setItem(PAPER_KEY, p); } catch { /* private mode: kept for this visit */ } };
   const existing = useQuery({ queryKey: ['acct-invoice', id], queryFn: () => api.get<Invoice>(`/accounting/invoices/${id}`), enabled: !isNew });
   const next = useQuery({ queryKey: ['acct-invoice-next'], queryFn: () => api.get<{ number: string }>('/accounting/invoices/next-number'), enabled: isNew });
   const clients = useQuery({ queryKey: ['client-directory'], queryFn: () => api.get<{ id: string; name: string }[]>('/clients/directory'), staleTime: 60_000 });
@@ -636,6 +639,9 @@ function InvoiceEditor() {
           {inv && (inv.cancelled
             ? <Button variant="secondary" onClick={() => setCancelled(false)}><RotateCcw className="h-4 w-4" />Restore</Button>
             : <Button variant="secondary" onClick={() => setCancelled(true)}><Ban className="h-4 w-4" />Cancel invoice</Button>)}
+          <Select value={paper} onChange={(e) => setPaper(e.target.value as Paper)} className="w-36" aria-label="Paper size for printing" title="Paper size for printing">
+            {(Object.keys(PAPERS) as Paper[]).map((p) => <option key={p} value={p}>{PAPERS[p].label}</option>)}
+          </Select>
           <Button variant="secondary" onClick={() => print(['ORIGINAL FOR RECIPIENT'])} title="Print or save only the original copy, for the client"><Printer className="h-4 w-4" />Original</Button>
           <Button variant="secondary" onClick={() => print(['DUPLICATE FOR SUPPLIER'])} title="Print or save only the duplicate copy, for Prisim's records"><Printer className="h-4 w-4" />Duplicate</Button>
           <Button variant="secondary" onClick={() => print(COPIES)} title="Both copies, one per page"><Printer className="h-4 w-4" />Both copies</Button>
@@ -756,7 +762,8 @@ function InvoiceEditor() {
           )}
         </div>
 
-        <div className="overflow-x-auto print:overflow-visible"><InvoiceCopies inv={sheet} s={settings.data} printing={printing} /></div>
+        <div className="overflow-x-auto print:hidden"><InvoiceCopies inv={sheet} s={settings.data} printing={printing} /></div>
+        <InvoicePrint inv={sheet} s={settings.data} copies={printing} paper={paper} />
       </div>
 
       {paying && inv && <PaymentModal title={`Payment for ${inv.number}`} max={inv.balance} onClose={() => setPaying(false)}
@@ -804,6 +811,51 @@ function Party({ title, name, address, gstin, stateCode, extra }: { title?: stri
 const COPIES = ['ORIGINAL FOR RECIPIENT', 'DUPLICATE FOR SUPPLIER'] as const;
 type Copy = (typeof COPIES)[number];
 const COPY_NAMES: Record<Copy, string> = { 'ORIGINAL FOR RECIPIENT': 'Original for Recipient', 'DUPLICATE FOR SUPPLIER': 'Duplicate for Supplier' };
+
+/** Paper sizes the invoice can print on, in millimetres. Each copy is fitted to one page. */
+const PAPERS = {
+  A4: { label: 'A4', w: 210, h: 297 },
+  Letter: { label: 'Letter', w: 215.9, h: 279.4 },
+  Legal: { label: 'Legal', w: 215.9, h: 355.6 },
+  A5: { label: 'A5 (small)', w: 148, h: 210 },
+} as const;
+type Paper = keyof typeof PAPERS;
+const PAPER_KEY = 'prisim.invoice.paper';
+const savedPaper = (): Paper => { try { const p = localStorage.getItem(PAPER_KEY); return p && p in PAPERS ? (p as Paper) : 'A4'; } catch { return 'A4'; } };
+const MARGIN_MM = 8;
+const PX_PER_MM = 96 / 25.4;
+
+/**
+ * What actually prints: the chosen copies, outside the app's layout so nothing around them can shift or clip them.
+ * It is laid out off screen at the page's printable width, and any copy taller than a page is scaled down to fit it,
+ * so every copy prints whole on its own page with nothing cut at the sides or bottom.
+ */
+function InvoicePrint({ inv, s, copies, paper }: { inv: SheetInvoice; s: Settings; copies: readonly Copy[]; paper: Paper }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const size = PAPERS[paper];
+  const width = (size.w - 2 * MARGIN_MM) * PX_PER_MM;
+  const height = (size.h - 2 * MARGIN_MM) * PX_PER_MM;
+  useLayoutEffect(() => {
+    const fit = () => {
+      for (const el of ref.current?.querySelectorAll<HTMLElement>('.invoice-copy') ?? []) {
+        el.style.removeProperty('zoom');
+        const h = el.scrollHeight;
+        // A little room for fonts that print slightly larger than they show on screen.
+        const z = Math.min(1, (height * 0.97) / h, (width * 0.995) / el.scrollWidth);
+        if (z < 1) el.style.setProperty('zoom', z.toFixed(3));
+      }
+    };
+    fit();
+    document.fonts?.ready.then(fit).catch(() => {});
+  }, [inv, s, copies, paper, width, height]);
+  return createPortal(
+    <div id="invoice-print" ref={ref} style={{ width }} aria-hidden="true">
+      <style>{`@media print { @page { size: ${size.w}mm ${size.h}mm; margin: ${MARGIN_MM}mm; } }`}</style>
+      {copies.map((copy, i) => <InvoiceSheet key={copy} inv={inv} s={s} copy={copy} className={i > 0 ? 'invoice-next' : undefined} />)}
+    </div>,
+    document.body,
+  );
+}
 
 /**
  * Both copies of the invoice, one after the other on screen. This element alone prints:
@@ -1008,3 +1060,4 @@ function InvoiceSheet({ inv, s, copy, className }: { inv: SheetInvoice; s: Setti
     </div>
   );
 }
+
