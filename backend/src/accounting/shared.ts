@@ -59,7 +59,7 @@ export const DEFAULT_SETTINGS: AcctSettingsData = {
   tagline: 'Digital Marketing | Advertising | Lead Generation | Business Growth | Software Development',
   address: 'No.21, Ramachandra Arcad\n3rd Floor, MSRE Road\nBangalore - 560 054.',
   phone: '9742502964',
-  email: 'varuncena12@gmail.com',
+  email: 'info@prisim.co.in',
   website: 'www.prisim.co.in',
   gstin: '29CROPV8759A1ZX',
   stateCode: '29',
